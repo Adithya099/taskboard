@@ -1,0 +1,1327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Task Board — Dubai Golf</title>
+
+<!-- React -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+<!-- Babel (transpiles JSX in the browser — no build step needed) -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<!-- Firebase SDK v9 compat (works as global firebase.*) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI Variable', Segoe UI, system-ui, sans-serif; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f3f3f3; }
+  ::-webkit-scrollbar-thumb { background: #c8c8c8; border-radius: 3px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 700px) {
+    .desktop-table { display: none !important; }
+    .mobile-cards  { display: block !important; }
+    .stats-grid    { grid-template-columns: repeat(2,1fr) !important; }
+    .header-clock  { display: none !important; }
+  }
+  @media (min-width: 701px) {
+    .mobile-cards { display: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <!-- Loading indicator while Babel transpiles -->
+  <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Segoe UI,sans-serif;background:#f3f3f3;gap:16px">
+    <div style="width:40px;height:40px;border:4px solid #e0e0e0;border-top-color:#0067c0;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+    <div style="font-size:14px;color:#5d5d5d">Loading TaskBoard…</div>
+  </div>
+</div>
+
+<script type="text/babel" data-presets="react">
+// ── Make React hooks available as globals (Babel transforms JSX but not imports) ──
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── Bridge: expose Firebase modular-style functions via window.__fb* ──
+// The compat SDK is loaded above. We wrap it to match the modular API
+// that getFirebase() and useStore() expect.
+window.__fbInit    = (config) => firebase.initializeApp(config);
+window.__fbGetDb   = (app)    => firebase.database(app);
+window.__fbRef     = (db, path) => db.ref(path);
+window.__fbOnValue = (ref, cb, errCb) => { ref.on('value', cb, errCb); return () => ref.off('value', cb); };
+window.__fbSet     = (ref, val) => ref.set(val);
+window.__fbOff     = (ref, cb) => ref.off('value', cb);
+window.__fbReady   = true;
+
+
+// ── Theme tokens ──────────────────────────────────────────────
+function buildW(s = {}) {
+  const acc = s.themeAccent || "#0067c0";
+  return {
+    bg: s.themeBg || "#f3f3f3", surface: s.themeSurface || "#ffffff",
+    surfaceAlt: s.themeSurface || "#f9f9f9", card: "#ffffffee",
+    border: "#e0e0e0", borderFocus: acc,
+    text: s.themeText || "#1a1a1a", textSec: "#5d5d5d", textTert: "#9a9a9a",
+    accent: acc, accentHov: acc, accentSoft: acc + "22",
+    success: "#107c10", successBg: "#dff0d8",
+    warning: "#9f6000", warningBg: "#fff4ce",
+    danger: "#c42b1c", dangerBg: "#fde7e9",
+    high: "#c42b1c", highBg: "#fde7e9",
+    dismissed: "#6b6b6b", dismissedBg: "#f0f0f0",
+    todayBg: s.themeToday || "#e8f4fe",
+    shadow: "0 2px 8px rgba(0,0,0,0.08),0 0 1px rgba(0,0,0,0.05)",
+    shadowMd: "0 4px 16px rgba(0,0,0,0.10),0 0 1px rgba(0,0,0,0.05)",
+    shadowLg: "0 8px 32px rgba(0,0,0,0.12)",
+    radius: "8px", radiusMd: "10px",
+  };
+}
+// ── Firebase config ───────────────────────────────────────────
+const FB_CONFIG = {
+  apiKey:            "AIzaSyAgkQNAnfuZI-q1LcTPEzWpi2O17UJXJ0s",
+  authDomain:        "viya-taskboard.firebaseapp.com",
+  databaseURL:       "https://viya-taskboard-default-rtdb.firebaseio.com",
+  projectId:         "viya-taskboard",
+  storageBucket:     "viya-taskboard.firebasestorage.app",
+  messagingSenderId: "245914870067",
+  appId:             "1:245914870067:web:8aefa00e66e6820e2c1e46",
+};
+
+// ── Firebase SDK (loaded via <script> tags below, exposed on window) ─
+let _fbApp = null;
+let _fbDb  = null;
+
+function getFirebase() {
+  if (_fbDb) return _fbDb;
+  try {
+    const initializeApp = window.__fbInit;
+    const getDatabase   = window.__fbGetDb;
+    if (!initializeApp || !getDatabase) return null;
+    if (!_fbApp) _fbApp = initializeApp(FB_CONFIG);
+    _fbDb = getDatabase(_fbApp);
+  } catch (e) {
+    console.error("Firebase init error:", e);
+  }
+  return _fbDb;
+}
+
+const DB_PATH = "taskboard";
+
+// ── Read theme from cache for instant paint; Firebase will update it ──
+let _st = {};
+try { _st = JSON.parse(localStorage.getItem("tbpro_theme") || "{}"); } catch {}
+const W = buildW(_st);
+
+// ── Helpers ───────────────────────────────────────────────────
+const todayStr    = () => new Date().toISOString().split("T")[0];
+const nowTime     = () => new Date().toLocaleTimeString("en-GB", { hour:"2-digit", minute:"2-digit" });
+const daysBetween = (d1, d2) => Math.round((new Date(d2) - new Date(d1)) / 86400000);
+const dateKey     = d => d.toISOString().split("T")[0];
+const initials    = name => name.split(" ").map(n => n[0]).join("").slice(0,2).toUpperCase();
+
+// ── Store ─────────────────────────────────────────────────────
+const INIT = {
+  colleagues: [], history: [],
+  adminPw: "admin1234",
+  orgName: "Dubai Golf", boardTitle: "Team Task Board", icon: "⛳",
+};
+
+function useStore() {
+  const [data,    setData]    = useState(INIT);
+  const [loading, setLoading] = useState(true);
+  const [fbError, setFbError] = useState(null);
+
+  useEffect(() => {
+    const db = getFirebase();
+    if (!db) {
+      setFbError("Firebase unavailable — SDK did not load.");
+      setLoading(false);
+      return;
+    }
+
+    const fbRef     = window.__fbRef;
+    const fbOnValue = window.__fbOnValue;
+    const fbSet     = window.__fbSet;
+    const fbOff     = window.__fbOff;
+
+    const dbRef = fbRef(db, DB_PATH);
+
+    const unsubscribe = fbOnValue(dbRef, snap => {
+      const val = snap.val();
+      if (val) {
+        const normalised = {
+          ...INIT,
+          ...val,
+          colleagues: val.colleagues
+            ? Object.values(val.colleagues).map(c => ({
+                ...c,
+                tasks: c.tasks ? Object.values(c.tasks) : [],
+              }))
+            : [],
+          history: val.history ? Object.values(val.history) : [],
+        };
+        setData(normalised);
+        try { localStorage.setItem("tbpro_theme", JSON.stringify({ themeAccent:val.themeAccent, themeBg:val.themeBg, themeSurface:val.themeSurface, themeText:val.themeText, themeToday:val.themeToday })); } catch {}
+      } else {
+        fbSet(dbRef, INIT);
+      }
+      setLoading(false);
+    }, err => {
+      setFbError("Firebase error: " + err.message);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const persist = useCallback(fn => {
+    setData(prev => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      const db = getFirebase();
+      if (db && window.__fbRef && window.__fbSet) {
+        window.__fbSet(window.__fbRef(db, DB_PATH), next)
+          .catch(e => console.error("Firebase write error:", e));
+      }
+      return next;
+    });
+  }, []);
+
+  return [data, persist, loading, fbError];
+}
+
+// ── Primitives ────────────────────────────────────────────────
+const ff = "'Segoe UI Variable',Segoe UI,system-ui,sans-serif";
+
+const Btn = ({ children, onClick, variant="primary", size="md", style:sx={}, disabled=false }) => {
+  const base = { display:"inline-flex", alignItems:"center", gap:6, border:"none", cursor:disabled?"not-allowed":"pointer", fontFamily:ff, fontWeight:600, letterSpacing:0.1, transition:"all .15s", borderRadius:W.radius, opacity:disabled?0.5:1 };
+  const sizes = { xs:{padding:"3px 8px",fontSize:11}, sm:{padding:"5px 12px",fontSize:12}, md:{padding:"8px 16px",fontSize:13}, lg:{padding:"10px 20px",fontSize:14} };
+  const variants = {
+    primary: { background:W.accent, color:"#fff", border:`1px solid ${W.accentHov}` },
+    ghost:   { background:"transparent", color:W.accent, border:`1px solid ${W.border}` },
+    subtle:  { background:W.surfaceAlt, color:W.text, border:`1px solid ${W.border}` },
+    danger:  { background:W.dangerBg, color:W.danger, border:"1px solid #f1998f" },
+  };
+  return <button onClick={disabled?undefined:onClick} style={{ ...base, ...sizes[size], ...variants[variant], ...sx }}>{children}</button>;
+};
+
+const Input = ({ value, onChange, placeholder, type="text", onKeyDown, maxLength, autoFocus, style:sx={} }) => {
+  const ref = useRef();
+  useEffect(() => { if (autoFocus && ref.current) ref.current.focus(); }, [autoFocus]);
+  return (
+    <input ref={ref} type={type} value={value} onChange={onChange} placeholder={placeholder}
+      onKeyDown={onKeyDown} maxLength={maxLength}
+      style={{ width:"100%", padding:"8px 12px", borderRadius:W.radius, border:`1px solid ${W.border}`,
+        background:W.surface, fontFamily:ff, fontSize:13, color:W.text, outline:"none",
+        transition:"border-color .15s", boxSizing:"border-box", ...sx }}
+      onFocus={e=>e.target.style.borderColor=W.borderFocus}
+      onBlur={e=>e.target.style.borderColor=W.border}/>
+  );
+};
+
+const Label = ({ children }) => (
+  <div style={{ fontSize:11, fontWeight:600, color:W.textSec, textTransform:"uppercase", letterSpacing:1.2, marginBottom:6 }}>{children}</div>
+);
+
+const Card = ({ children, style:sx={} }) => (
+  <div style={{ background:W.card, border:`1px solid ${W.border}`, borderRadius:W.radiusMd, boxShadow:W.shadow, ...sx }}>{children}</div>
+);
+
+function Toast({ msg, type }) {
+  if (!msg) return null;
+  const map = { success:[W.successBg,W.success,"#a8d5a2"], error:[W.dangerBg,W.danger,"#f1998f"], info:[W.accentSoft,W.accent,"#90c8f0"] };
+  const [bg,txt,bdr] = map[type] || map.info;
+  return <div style={{ position:"fixed", bottom:20, right:20, zIndex:9999, background:bg, border:`1px solid ${bdr}`, borderRadius:W.radiusMd, padding:"12px 18px", fontSize:13, color:txt, boxShadow:W.shadowMd, fontWeight:500 }}>{msg}</div>;
+}
+
+// ── Login ─────────────────────────────────────────────────────
+function Login({ data, onLogin }) {
+  const [role, setRole] = useState("colleague");
+  const [selId, setSelId] = useState("");
+  const [pin, setPin] = useState("");
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = () => {
+    setErr("");
+    if (role === "admin") {
+      if (pw === data.adminPw) onLogin({ role:"admin", name:"Dr. Adithya Iyer" });
+      else setErr("Incorrect password.");
+    } else if (role === "display") {
+      onLogin({ role:"display", name:"Display Board" });
+    } else {
+      const c = data.colleagues.find(c => c.id == selId);
+      if (c && String(c.pin) === String(pin)) onLogin({ role:"colleague", name:c.name, colleagueId:c.id });
+      else setErr("Incorrect name or PIN.");
+    }
+  };
+
+  const roles = [{ id:"colleague", label:"👤 Colleague" }, { id:"admin", label:"🔑 Admin" }, { id:"display", label:"📺 Display" }];
+
+  return (
+    <div style={{ minHeight:"100vh", background:W.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:ff, position:"relative", overflow:"hidden" }}>
+      <div style={{ position:"fixed", inset:0, background:"radial-gradient(ellipse 80% 60% at 60% 20%,#daeeff 0%,transparent 70%),radial-gradient(ellipse 60% 50% at 20% 80%,#e8f5e8 0%,transparent 60%)", pointerEvents:"none" }}/>
+      <Card style={{ width:400, maxWidth:"95vw", padding:"40px 36px", position:"relative", zIndex:1, boxShadow:W.shadowLg }}>
+        <div style={{ textAlign:"center", marginBottom:32 }}>
+          <div style={{ width:56, height:56, background:`linear-gradient(135deg,${W.accent},#40a9ff)`, borderRadius:14, display:"inline-flex", alignItems:"center", justifyContent:"center", fontSize:24, marginBottom:14, boxShadow:`0 4px 16px ${W.accent}44` }}>{data.icon}</div>
+          <div style={{ fontSize:20, fontWeight:700, color:W.text }}>{data.orgName}</div>
+          <div style={{ fontSize:12, color:W.textSec, marginTop:3 }}>{data.boardTitle}</div>
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", background:W.surfaceAlt, borderRadius:W.radius, padding:3, marginBottom:24, border:`1px solid ${W.border}` }}>
+          {roles.map(r => (
+            <div key={r.id} onClick={() => setRole(r.id)} style={{ padding:"8px 4px", textAlign:"center", borderRadius:6, cursor:"pointer", fontSize:12, fontWeight:600, userSelect:"none", background:role===r.id?W.surface:"transparent", color:role===r.id?W.accent:W.textSec, boxShadow:role===r.id?W.shadow:"none", transition:"all .15s" }}>{r.label}</div>
+          ))}
+        </div>
+
+        {role === "colleague" && <>
+          <div style={{ marginBottom:16 }}>
+            <Label>Your Name</Label>
+            <select value={selId} onChange={e=>setSelId(e.target.value)} style={{ width:"100%", padding:"8px 12px", borderRadius:W.radius, border:`1px solid ${W.border}`, background:W.surface, fontFamily:ff, fontSize:13, color:W.text, outline:"none", boxSizing:"border-box" }}>
+              <option value="">Select your name…</option>
+              {data.colleagues.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div style={{ marginBottom:16 }}>
+            <Label>PIN</Label>
+            <Input type="password" maxLength={4} placeholder="4-digit PIN" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+          </div>
+        </>}
+
+        {role === "admin" && (
+          <div style={{ marginBottom:16 }}>
+            <Label>Admin Password</Label>
+            <Input type="password" placeholder="Password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&submit()}/>
+          </div>
+        )}
+
+        {role === "display" && (
+          <div style={{ marginBottom:20, padding:"14px 16px", background:W.todayBg, border:`1px solid ${W.accent}30`, borderRadius:W.radius }}>
+            <div style={{ fontSize:13, fontWeight:600, color:W.accent, marginBottom:4 }}>📺 Department Display Mode</div>
+            <div style={{ fontSize:12, color:W.textSec, lineHeight:1.6 }}>Read-only board for wall screen / TV. Shows all colleagues and all tasks. Auto-refreshes every 30s.</div>
+          </div>
+        )}
+
+        {err && <div style={{ color:W.danger, fontSize:12, marginBottom:12, padding:"8px 12px", background:W.dangerBg, borderRadius:6 }}>{err}</div>}
+        <Btn onClick={submit} variant="primary" size="lg" style={{ width:"100%", justifyContent:"center" }}>
+          {role === "display" ? "📺 Open Display Board" : "Sign In"}
+        </Btn>
+      </Card>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────
+function App() {
+  const [data, persist, loading, fbError] = useStore();
+  const [session, setSession] = useState(null);
+  const [view, setView] = useState("board");
+  const [toast, setToast] = useState(null);
+  const [modal, setModal] = useState(null);
+  const [clock, setClock] = useState({ date:"", time:"" });
+  const [search, setSearch] = useState("");
+  const [filterName, setFilterName] = useState("all");
+  const [confirmModal, setConfirmModal] = useState(null); // {msg, onConfirm}
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const n = new Date();
+      setClock({ date: n.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"}), time: n.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit"}) });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const showToast = (msg, type="info") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
+  const confirm = (msg, onConfirm) => setConfirmModal({ msg, onConfirm });
+
+  if (!session) return <Login data={data} onLogin={s=>{setSession(s);setView("board");}}/>;
+  if (session.role === "display") return <DisplayBoard data={data} onExit={()=>setSession(null)}/>;
+
+  // Loading spinner
+  if (loading) return (
+    <div style={{ minHeight:"100vh", background:W.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:ff, gap:16 }}>
+      <div style={{ width:44, height:44, border:`4px solid ${W.border}`, borderTopColor:W.accent, borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
+      <div style={{ fontSize:14, color:W.textSec }}>Connecting to Firebase…</div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  // Firebase error
+  if (fbError) return (
+    <div style={{ minHeight:"100vh", background:W.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:ff }}>
+      <div style={{ background:W.dangerBg, border:`1px solid #f1998f`, borderRadius:W.radiusMd, padding:"32px 40px", maxWidth:440, textAlign:"center" }}>
+        <div style={{ fontSize:28, marginBottom:12 }}>⚠️</div>
+        <div style={{ fontSize:16, fontWeight:600, color:W.danger, marginBottom:8 }}>Firebase Connection Error</div>
+        <div style={{ fontSize:13, color:W.text, lineHeight:1.7, marginBottom:20 }}>{fbError}</div>
+        <div style={{ fontSize:12, color:W.textSec, lineHeight:1.6 }}>
+          Check that your Firebase Realtime Database is enabled and the Security Rules allow read/write.<br/><br/>
+          Go to <strong>console.firebase.google.com</strong> → your project → Realtime Database → Rules → set to <code style={{background:"#f0f0f0",padding:"1px 5px",borderRadius:3}}>{`{"rules":{".read":"true",".write":"true"}}`}</code>
+        </div>
+      </div>
+    </div>
+  );
+
+  const isAdmin = session.role === "admin";
+  const td = todayStr();
+
+  // ── Task mutations ────────────────────────────────────────────
+  const addTask = (colleagueId, text, priority="normal") => {
+    if (!text.trim()) return;
+    persist(prev => ({
+      ...prev,
+      colleagues: prev.colleagues.map(c =>
+        c.id === colleagueId
+          ? { ...c, tasks:[...c.tasks, { id:Date.now(), text:text.trim(), done:false, priority, status:"pending", date:td, addedAt:nowTime(), completedAt:null, dismissedAt:null }] }
+          : c
+      ),
+    }));
+  };
+
+  const updateTask = (colleagueId, taskId, patch) => {
+    persist(prev => ({
+      ...prev,
+      colleagues: prev.colleagues.map(c =>
+        c.id !== colleagueId ? c : { ...c, tasks: c.tasks.map(t => t.id !== taskId ? t : { ...t, ...patch }) }
+      ),
+    }));
+  };
+
+  const toggleTask = (colleagueId, taskId) => {
+    persist(prev => {
+      const col = prev.colleagues.find(c => c.id === colleagueId);
+      const task = col?.tasks.find(t => t.id === taskId);
+      if (!col || !task) return prev;
+      const nowDone = task.status !== "complete";
+      const newStatus = nowDone ? "complete" : "pending";
+      const colleagues = prev.colleagues.map(c =>
+        c.id !== colleagueId ? c : {
+          ...c, tasks: c.tasks.map(t =>
+            t.id !== taskId ? t : { ...t, done:nowDone, status:newStatus, completedAt:nowDone?nowTime():null }
+          )
+        }
+      );
+      const history = nowDone
+        ? [...prev.history, { date:td, colleagueName:col.name, taskText:task.text, priority:task.priority||"normal", completedAt:nowTime(), originalDate:task.date }]
+        : prev.history.filter(h => !(h.colleagueName===col.name && h.taskText===task.text && h.date===td));
+      return { ...prev, colleagues, history };
+    });
+  };
+
+  const dismissTask = (colleagueId, taskId) => {
+    persist(prev => ({
+      ...prev,
+      colleagues: prev.colleagues.map(c =>
+        c.id !== colleagueId ? c : {
+          ...c, tasks: c.tasks.map(t =>
+            t.id !== taskId ? t : { ...t, status:"dismissed", done:false, dismissedAt:nowTime() }
+          )
+        }
+      ),
+    }));
+  };
+
+  const deleteTask = (colleagueId, taskId) => {
+    persist(prev => ({
+      ...prev,
+      colleagues: prev.colleagues.map(c =>
+        c.id === colleagueId ? { ...c, tasks:c.tasks.filter(t=>t.id!==taskId) } : c
+      ),
+    }));
+  };
+
+  // ── New Day reset ─────────────────────────────────────────────
+  const newDay = () => {
+    confirm("Start a new day? Completed & dismissed tasks will be archived. Pending and overdue tasks will carry forward as overdue.", () => {
+      persist(prev => {
+        const today = todayStr();
+        let newHistory = [...prev.history];
+        const colleagues = prev.colleagues.map(c => {
+          // Archive completed/dismissed, keep pending (they'll be overdue tomorrow)
+          const toArchive = c.tasks.filter(t => t.status === "complete" || t.status === "dismissed");
+          toArchive.forEach(t => {
+            if (!newHistory.some(h => h.colleagueName===c.name && h.taskText===t.text && h.date===t.date)) {
+              newHistory.push({ date:t.date, colleagueName:c.name, taskText:t.text, priority:t.priority||"normal", completedAt:t.completedAt||null, status:t.status, originalDate:t.date });
+            }
+          });
+          return { ...c, tasks: c.tasks.filter(t => t.status !== "complete" && t.status !== "dismissed") };
+        });
+        return { ...prev, colleagues, history:newHistory };
+      });
+      showToast("Board reset. Incomplete tasks carried forward as overdue.", "success");
+    });
+  };
+
+  const addColleague = ({ name, pin }) => {
+    if (!name.trim()) { showToast("Name is required","error"); return false; }
+    if (!pin || String(pin).length < 4) { showToast("PIN must be 4 digits","error"); return false; }
+    persist(prev => ({ ...prev, colleagues:[...prev.colleagues, { id:Date.now(), name:name.trim(), pin, tasks:[] }] }));
+    showToast(`${name} added`,"success");
+    return true;
+  };
+
+  const removeColleague = id => {
+    confirm("Remove this colleague? Their task history will be kept.", () => {
+      persist(prev => ({ ...prev, colleagues:prev.colleagues.filter(c=>c.id!==id) }));
+      showToast("Colleague removed","info");
+    });
+  };
+
+  // ── Visible colleagues + search/filter ───────────────────────
+  let visible = data.colleagues;
+  const searchLower = search.toLowerCase();
+  if (filterName !== "all") visible = visible.filter(c => c.id == filterName);
+  if (search) visible = visible.filter(c =>
+    c.name.toLowerCase().includes(searchLower) ||
+    c.tasks.some(t => t.text.toLowerCase().includes(searchLower))
+  );
+
+  // ── Task rows (today + overdue) ───────────────────────────────
+  const taskRows = [];
+  visible.forEach(c => {
+    const todayT = c.tasks.filter(t => t.date === td);
+    const overdueT = c.tasks.filter(t => t.date < td && t.status !== "complete" && t.status !== "dismissed");
+    const allRows = [
+      ...overdueT.map(t => ({ ...t, _overdue:true, _daysBehind:daysBetween(t.date,td) })),
+      ...todayT,
+    ];
+    if (allRows.length === 0) taskRows.push({ c, task:null });
+    else allRows.forEach(task => taskRows.push({ c, task }));
+  });
+
+  // Stats
+  const allTasks   = data.colleagues.flatMap(c => c.tasks);
+  const todayAll   = allTasks.filter(t => t.date === td);
+  const doneCount  = todayAll.filter(t => t.status === "complete").length;
+  const overdueCount = allTasks.filter(t => t.date < td && t.status !== "complete" && t.status !== "dismissed").length;
+  const highCount  = todayAll.filter(t => t.priority === "high" && t.status !== "complete").length;
+
+  const ini = session.name.split(" ").map(n=>n[0]).join("").slice(0,2).toUpperCase();
+  const NavBtn = ({ id, label }) => (
+    <button onClick={()=>setView(id)} style={{ padding:"6px 16px", borderRadius:20, border:"none", cursor:"pointer", fontSize:12, fontWeight:600, background:view===id?W.accent:"transparent", color:view===id?"#fff":W.textSec, fontFamily:ff, transition:"all .15s" }}>{label}</button>
+  );
+
+  return (
+    <div style={{ minHeight:"100vh", background:W.bg, color:W.text, fontFamily:ff, display:"flex", flexDirection:"column" }}>
+      <style>{`
+        *{box-sizing:border-box}
+        ::-webkit-scrollbar{width:6px;height:6px}
+        ::-webkit-scrollbar-track{background:#f3f3f3}
+        ::-webkit-scrollbar-thumb{background:#c8c8c8;border-radius:3px}
+        input::placeholder{color:#bbb}
+        @media(max-width:700px){
+          .desktop-table{display:none!important}
+          .mobile-cards{display:block!important}
+          .stats-grid{grid-template-columns:repeat(2,1fr)!important}
+          .header-clock{display:none!important}
+        }
+        @media(min-width:701px){
+          .mobile-cards{display:none!important}
+        }
+      `}</style>
+
+      {/* HEADER */}
+      <header style={{ background:"rgba(255,255,255,0.88)", backdropFilter:"blur(20px) saturate(180%)", borderBottom:`1px solid ${W.border}`, padding:"0 20px", height:52, display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:200 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:30, height:30, background:W.accent, borderRadius:8, display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>{data.icon}</div>
+          <div>
+            <div style={{ fontSize:14, fontWeight:700, color:W.text, lineHeight:1.1 }}>{data.orgName}</div>
+            <div style={{ fontSize:10, color:W.textSec }}>{data.boardTitle}</div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:2, background:W.surfaceAlt, borderRadius:22, padding:"3px", border:`1px solid ${W.border}` }}>
+          <NavBtn id="board" label="📅 Board"/>
+          <NavBtn id="history" label="📜 History"/>
+          {isAdmin && <NavBtn id="admin" label="⚙️ Admin"/>}
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div className="header-clock" style={{ fontSize:11, color:W.textSec, textAlign:"right", lineHeight:1.5 }}>
+            <div style={{ fontWeight:600, color:W.text }}>{clock.date}</div>
+            <div style={{ fontFamily:"Consolas,monospace" }}>{clock.time}</div>
+          </div>
+          <div onClick={()=>setSession(null)} title="Sign out" style={{ display:"flex", alignItems:"center", gap:8, background:W.surfaceAlt, border:`1px solid ${W.border}`, borderRadius:W.radius, padding:"5px 12px", cursor:"pointer" }}>
+            <div style={{ width:26, height:26, borderRadius:"50%", background:W.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:10, fontWeight:700, color:"#fff" }}>{ini}</div>
+            <div>
+              <div style={{ fontSize:12, fontWeight:600, color:W.text }}>{session.name}</div>
+              <div style={{ fontSize:10, color:isAdmin?W.accent:W.success, fontWeight:600 }}>{isAdmin?"Admin":"Colleague"}</div>
+            </div>
+            <span style={{ fontSize:11, color:W.textTert }}>↩</span>
+          </div>
+        </div>
+      </header>
+
+      <main style={{ padding:"18px 20px", flex:1 }}>
+
+        {/* ══ BOARD ══ */}
+        {view === "board" && <>
+          {/* Stats */}
+          <div className="stats-grid" style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:12, marginBottom:18 }}>
+            {[
+              { icon:"📋", val:todayAll.length,  lbl:"Tasks Today", col:W.accent },
+              { icon:"✅", val:doneCount,         lbl:"Completed",  col:W.success },
+              { icon:"⚠️", val:overdueCount,      lbl:"Overdue",    col:overdueCount>0?W.danger:W.textSec },
+              { icon:"🔴", val:highCount,         lbl:"High Priority", col:highCount>0?W.danger:W.textSec },
+            ].map(({ icon,val,lbl,col }) => (
+              <Card key={lbl} style={{ padding:"14px 16px", display:"flex", alignItems:"center", gap:12 }}>
+                <div style={{ width:36, height:36, borderRadius:8, background:`${col}18`, display:"flex", alignItems:"center", justifyContent:"center", fontSize:17 }}>{icon}</div>
+                <div>
+                  <div style={{ fontSize:22, fontWeight:700, color:col, lineHeight:1 }}>{val}</div>
+                  <div style={{ fontSize:10, color:W.textSec, marginTop:2 }}>{lbl}</div>
+                </div>
+              </Card>
+            ))}
+          </div>
+
+          {/* Toolbar */}
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:14, flexWrap:"wrap", gap:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap", flex:1 }}>
+              {/* Date pill */}
+              <div style={{ padding:"6px 14px", borderRadius:20, background:W.todayBg, border:`1.5px solid ${W.accent}40`, whiteSpace:"nowrap" }}>
+                <span style={{ fontSize:13, fontWeight:700, color:W.accent }}>
+                  📅 {new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"})}
+                </span>
+              </div>
+              {/* Search */}
+              <div style={{ position:"relative", flex:1, minWidth:160, maxWidth:280 }}>
+                <span style={{ position:"absolute", left:10, top:"50%", transform:"translateY(-50%)", fontSize:13, color:W.textTert }}>🔍</span>
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search tasks or names…"
+                  style={{ width:"100%", paddingLeft:32, paddingRight:10, paddingTop:7, paddingBottom:7, borderRadius:20, border:`1px solid ${W.border}`, background:W.surface, fontFamily:ff, fontSize:12, color:W.text, outline:"none" }}/>
+                {search && <span onClick={()=>setSearch("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", cursor:"pointer", fontSize:12, color:W.textTert }}>✕</span>}
+              </div>
+              {/* Filter by colleague */}
+              <select value={filterName} onChange={e=>setFilterName(e.target.value)}
+                style={{ padding:"7px 12px", borderRadius:W.radius, border:`1px solid ${W.border}`, background:W.surface, fontFamily:ff, fontSize:12, color:W.text, cursor:"pointer", outline:"none" }}>
+                <option value="all">All Colleagues</option>
+                {data.colleagues.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div style={{ display:"flex", gap:8 }}>
+              {isAdmin && <Btn onClick={()=>setModal({type:"addColleague"})} variant="primary" size="sm">+ Add Colleague</Btn>}
+              {isAdmin && <Btn onClick={newDay} variant="danger" size="sm">🌅 New Day</Btn>}
+            </div>
+          </div>
+
+          {/* ── DESKTOP TABLE ── */}
+          <div className="desktop-table">
+            <Card style={{ overflow:"hidden" }}>
+              <div style={{ overflowX:"auto" }}>
+                <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                  <thead>
+                    <tr style={{ background:W.todayBg }}>
+                      {["COLLEAGUE","PRIORITY","TASK","STATUS","ADDED AT","COMPLETED AT","ACTIONS"].map((h,i) => (
+                        <th key={h} style={{ padding:"11px 14px", background:W.todayBg, borderBottom:`2px solid ${W.accent}`, borderRight:i<6?`1px solid ${W.border}`:"none", textAlign:i>1&&i<6?"center":"left", fontSize:10, fontWeight:600, letterSpacing:1.2, textTransform:"uppercase", color:W.accent, position:"sticky", top:0, zIndex:5, fontFamily:ff, whiteSpace:"nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {taskRows.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign:"center", padding:52, color:W.textTert, fontSize:14 }}>
+                        {isAdmin ? 'No colleagues yet — click "+ Add Colleague"' : "Your profile isn't set up yet."}
+                      </td></tr>
+                    )}
+                    {taskRows.map(({ c, task }, idx) => {
+                      const canEdit = isAdmin || session?.colleagueId === c.id;
+                      const showName = idx === 0 || taskRows[idx-1].c.id !== c.id;
+                      const overdue = !!task?._overdue;
+                      const dismissed = task?.status === "dismissed";
+                      const rowBg = dismissed ? W.dismissedBg : task?.status==="complete" ? `${W.success}08` : overdue ? `${W.danger}05` : W.surface;
+                      return (
+                        <tr key={task?task.id:`empty-${c.id}`} style={{ borderBottom:`1px solid ${W.border}`, background:rowBg }}>
+                          {/* Colleague */}
+                          <td style={{ padding:"9px 14px", borderRight:`2px solid ${W.border}`, background:W.surfaceAlt, verticalAlign:"middle", minWidth:150 }}>
+                            {showName ? (
+                              <div style={{ display:"flex", alignItems:"center", gap:9 }}>
+                                <div style={{ width:30, height:30, borderRadius:"50%", background:W.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:11, fontWeight:700, color:"#fff", flexShrink:0 }}>{initials(c.name)}</div>
+                                <span style={{ fontSize:13, fontWeight:600, whiteSpace:"nowrap" }}>{c.name}</span>
+                              </div>
+                            ) : <div style={{ borderLeft:`2px solid ${W.accentSoft}`, marginLeft:15, height:18 }}/>}
+                          </td>
+                          {/* Priority */}
+                          <td style={{ padding:"9px 10px", borderRight:`1px solid ${W.border}`, textAlign:"center", verticalAlign:"middle" }}>
+                            {task ? (
+                              canEdit
+                                ? <PriorityToggle priority={task.priority||"normal"} onToggle={()=>updateTask(c.id,task.id,{priority:task.priority==="high"?"normal":"high"})}/>
+                                : <PriorityDot priority={task.priority||"normal"}/>
+                            ) : <span style={{color:W.border}}>—</span>}
+                          </td>
+                          {/* Task text — double-click to edit */}
+                          <td style={{ padding:"9px 14px", borderRight:`1px solid ${W.border}`, verticalAlign:"middle", minWidth:220 }}>
+                            {task
+                              ? <EditableTask task={task} canEdit={canEdit} onSave={text=>updateTask(c.id,task.id,{text})} overdue={overdue} dismissed={dismissed}/>
+                              : canEdit
+                                ? <InlineAdd onAdd={(text,pri)=>addTask(c.id,text,pri)} placeholder="Type task + Enter…"/>
+                                : <span style={{color:W.textTert,fontSize:12,fontStyle:"italic"}}>No tasks yet</span>
+                            }
+                          </td>
+                          {/* Status */}
+                          <td style={{ padding:"8px 10px", borderRight:`1px solid ${W.border}`, textAlign:"center", verticalAlign:"middle" }}>
+                            {task
+                              ? <StatusToggle status={task.status||"pending"} overdue={overdue} canEdit={canEdit} onToggle={()=>toggleTask(c.id,task.id)} onDismiss={()=>dismissTask(c.id,task.id)}/>
+                              : <span style={{color:W.border}}>—</span>}
+                          </td>
+                          {/* Added */}
+                          <td style={{ padding:"9px 14px", borderRight:`1px solid ${W.border}`, textAlign:"center", verticalAlign:"middle" }}>
+                            <span style={{ fontSize:11, color:W.textSec, fontFamily:"Consolas,monospace" }}>{task?.addedAt||"—"}</span>
+                          </td>
+                          {/* Completed */}
+                          <td style={{ padding:"9px 14px", borderRight:`1px solid ${W.border}`, textAlign:"center", verticalAlign:"middle" }}>
+                            {task?.status==="complete"&&task?.completedAt
+                              ? <span style={{ fontSize:11, color:W.success, fontFamily:"Consolas,monospace", fontWeight:600 }}>✓ {task.completedAt}</span>
+                              : task?.status==="dismissed"
+                                ? <span style={{ fontSize:11, color:W.dismissed }}>dismissed</span>
+                                : <span style={{color:W.textTert,fontSize:11}}>—</span>}
+                          </td>
+                          {/* Actions */}
+                          <td style={{ padding:"9px 10px", textAlign:"center", verticalAlign:"middle" }}>
+                            {task && canEdit && (
+                              <button onClick={()=>confirm("Delete this task?",()=>deleteTask(c.id,task.id))}
+                                title="Delete task"
+                                style={{ width:26, height:26, borderRadius:6, border:`1px solid ${W.border}`, background:W.dangerBg, color:W.danger, cursor:"pointer", fontSize:13, display:"inline-flex", alignItems:"center", justifyContent:"center", fontFamily:ff }}>
+                                🗑
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {/* Add-task footer rows */}
+                    {visible.map(c => {
+                      const canEdit = isAdmin || session?.colleagueId === c.id;
+                      if (!canEdit) return null;
+                      return (
+                        <tr key={`add-${c.id}`} style={{ background:`${W.accent}04`, borderBottom:`1px solid ${W.border}` }}>
+                          <td style={{ padding:"7px 14px", borderRight:`2px solid ${W.border}`, background:W.surfaceAlt }}>
+                            <span style={{ fontSize:11, color:W.textTert, fontStyle:"italic" }}>+ {c.name}</span>
+                          </td>
+                          <td colSpan={6} style={{ padding:"7px 14px" }}>
+                            <InlineAdd onAdd={(text,pri)=>addTask(c.id,text,pri)} placeholder={`Add task for ${c.name}…`}/>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          </div>
+
+          {/* ── MOBILE CARDS ── */}
+          <div className="mobile-cards">
+            {taskRows.length === 0 && (
+              <Card style={{ padding:32, textAlign:"center", color:W.textTert }}>
+                {isAdmin ? 'No colleagues yet.' : "Your profile isn't set up yet."}
+              </Card>
+            )}
+            {taskRows.map(({ c, task }, idx) => {
+              const canEdit = isAdmin || session?.colleagueId === c.id;
+              const showName = idx === 0 || taskRows[idx-1].c.id !== c.id;
+              const overdue = !!task?._overdue;
+              const dismissed = task?.status === "dismissed";
+              return (
+                <div key={task?task.id:`empty-${c.id}`}>
+                  {showName && (
+                    <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 4px 6px" }}>
+                      <div style={{ width:32, height:32, borderRadius:"50%", background:W.accent, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:"#fff" }}>{initials(c.name)}</div>
+                      <span style={{ fontSize:14, fontWeight:700, color:W.text }}>{c.name}</span>
+                    </div>
+                  )}
+                  {task ? (
+                    <Card style={{ marginBottom:8, padding:"12px 14px", background: dismissed?W.dismissedBg:overdue?`${W.danger}06`:task.status==="complete"?`${W.success}06`:W.surface }}>
+                      <div style={{ display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:10 }}>
+                        <div style={{ flex:1 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4 }}>
+                            <PriorityDot priority={task.priority||"normal"}/>
+                            <span style={{ fontSize:13, color:dismissed||task.status==="complete"?W.textTert:W.text, textDecoration:task.status==="complete"?"line-through":"none" }}>{task.text}</span>
+                          </div>
+                          {overdue && !dismissed && task.status!=="complete" && (
+                            <div style={{ fontSize:10, color:W.danger, fontWeight:600 }}>⚠ OVERDUE · {task._daysBehind}d ago</div>
+                          )}
+                          <div style={{ fontSize:10, color:W.textTert, marginTop:4 }}>Added {task.addedAt}{task.completedAt?" · Done "+task.completedAt:""}</div>
+                        </div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:6, alignItems:"flex-end" }}>
+                          <StatusToggle status={task.status||"pending"} overdue={overdue} canEdit={canEdit} onToggle={()=>toggleTask(c.id,task.id)} onDismiss={()=>dismissTask(c.id,task.id)} compact/>
+                          {canEdit && (
+                            <button onClick={()=>confirm("Delete this task?",()=>deleteTask(c.id,task.id))} style={{ padding:"3px 8px", borderRadius:5, border:`1px solid ${W.border}`, background:W.dangerBg, color:W.danger, cursor:"pointer", fontSize:11, fontFamily:ff }}>Delete</button>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ) : canEdit ? (
+                    <Card style={{ marginBottom:8, padding:"10px 14px" }}>
+                      <InlineAdd onAdd={(text,pri)=>addTask(c.id,text,pri)} placeholder="Add task…"/>
+                    </Card>
+                  ) : null}
+                </div>
+              );
+            })}
+            {/* Mobile add-task per colleague */}
+            {visible.map(c => {
+              const canEdit = isAdmin || session?.colleagueId === c.id;
+              if (!canEdit || c.tasks.length > 0) return null;
+              return null; // covered by empty row above
+            })}
+            {/* Always show add footer for own colleagues */}
+            {visible.filter(c => (isAdmin||session?.colleagueId===c.id) && c.tasks.filter(t=>t.date===td).length>0).map(c => (
+              <Card key={`mob-add-${c.id}`} style={{ marginBottom:12, padding:"10px 14px", background:`${W.accent}04` }}>
+                <div style={{ fontSize:11, color:W.textTert, marginBottom:6 }}>+ Add another task for {c.name}</div>
+                <InlineAdd onAdd={(text,pri)=>addTask(c.id,text,pri)} placeholder="New task…"/>
+              </Card>
+            ))}
+          </div>
+        </>}
+
+        {view === "history" && <HistoryView data={data} session={session}/>}
+        {view === "admin" && isAdmin && (
+          <AdminView data={data} persist={persist} showToast={showToast}
+            onAddColleague={()=>setModal({type:"addColleague"})}
+            onRemoveColleague={removeColleague} onNewDay={newDay}/>
+        )}
+      </main>
+
+      {modal?.type==="addColleague" && (
+        <AddColleagueModal onSave={v=>{if(addColleague(v))setModal(null);}} onClose={()=>setModal(null)}/>
+      )}
+      {confirmModal && (
+        <ConfirmModal msg={confirmModal.msg} onConfirm={()=>{confirmModal.onConfirm();setConfirmModal(null);}} onClose={()=>setConfirmModal(null)}/>
+      )}
+      <Toast msg={toast?.msg} type={toast?.type}/>
+    </div>
+  );
+}
+
+// ── PriorityDot (read-only) ───────────────────────────────────
+function PriorityDot({ priority }) {
+  const high = priority === "high";
+  return (
+    <div style={{ display:"inline-flex", alignItems:"center", gap:5 }}>
+      <div style={{ width:9, height:9, borderRadius:"50%", background:high?W.high:"#c0c0c0", boxShadow:high?`0 0 0 3px ${W.high}22`:"none", flexShrink:0 }}/>
+      <span style={{ fontSize:10, fontWeight:600, color:high?W.high:W.textTert }}>{high?"High":"Normal"}</span>
+    </div>
+  );
+}
+
+// ── PriorityToggle (editable) ─────────────────────────────────
+function PriorityToggle({ priority, onToggle }) {
+  const [hover, setHover] = useState(false);
+  const high = priority === "high";
+  return (
+    <div onMouseEnter={()=>setHover(true)} onMouseLeave={()=>setHover(false)}
+      onClick={onToggle} title="Toggle priority"
+      style={{ display:"inline-flex", alignItems:"center", gap:5, cursor:"pointer", padding:"3px 8px", borderRadius:12, background:high?W.highBg:hover?"#f5f5f5":W.surfaceAlt, border:`1px solid ${high?"#f1998f":W.border}`, transition:"all .15s" }}>
+      <div style={{ width:9, height:9, borderRadius:"50%", background:high?W.high:"#c0c0c0", flexShrink:0 }}/>
+      <span style={{ fontSize:10, fontWeight:600, color:high?W.high:W.textSec }}>{high?"High":"Normal"}</span>
+    </div>
+  );
+}
+
+// ── EditableTask — double-click to edit inline ────────────────
+function EditableTask({ task, canEdit, onSave, overdue, dismissed }) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(task.text);
+
+  const save = () => {
+    if (val.trim() && val.trim() !== task.text) onSave(val.trim());
+    setEditing(false);
+  };
+
+  if (editing && canEdit) {
+    return (
+      <input value={val} onChange={e=>setVal(e.target.value)} autoFocus
+        onKeyDown={e=>{ if(e.key==="Enter")save(); if(e.key==="Escape"){setVal(task.text);setEditing(false);} }}
+        onBlur={save}
+        style={{ width:"100%", padding:"5px 8px", borderRadius:6, border:`1.5px solid ${W.accent}`, fontFamily:ff, fontSize:13, outline:"none", background:W.todayBg }}/>
+    );
+  }
+
+  return (
+    <div onDoubleClick={canEdit?()=>setEditing(true):undefined} title={canEdit?"Double-click to edit":""} style={{ cursor:canEdit?"text":"default" }}>
+      <div style={{ fontSize:13, color:dismissed||task.status==="complete"?W.textTert:W.text, textDecoration:task.status==="complete"?"line-through":dismissed?"line-through":"none", lineHeight:1.45 }}>
+        {task.text}
+        {canEdit && <span style={{ fontSize:9, color:W.textTert, marginLeft:6, opacity:0.6 }}>✏</span>}
+      </div>
+      {overdue && task.status!=="complete" && task.status!=="dismissed" && (
+        <div style={{ fontSize:10, color:W.danger, fontWeight:600, marginTop:2 }}>⚠ OVERDUE · {task._daysBehind}d ago</div>
+      )}
+    </div>
+  );
+}
+
+// ── StatusToggle ──────────────────────────────────────────────
+function StatusToggle({ status, overdue, canEdit, onToggle, onDismiss, compact }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef();
+
+  useEffect(() => {
+    const h = e => { if(ref.current&&!ref.current.contains(e.target))setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const cfg = {
+    complete:  { bg:W.successBg, border:"#a8d5a2", color:W.success, dot:W.success,    label:"Complete" },
+    pending:   { bg:W.surfaceAlt,border:W.border,  color:W.textSec,  dot:"#c0c0c0",   label:"Pending" },
+    overdue:   { bg:W.dangerBg,  border:"#f1998f", color:W.danger,   dot:W.danger,    label:"Overdue" },
+    dismissed: { bg:W.dismissedBg,border:"#ccc",   color:W.dismissed,dot:W.dismissed, label:"Dismissed" },
+  };
+
+  const key = status==="complete"?"complete":status==="dismissed"?"dismissed":overdue?"overdue":"pending";
+  const s = cfg[key];
+
+  if (!canEdit) {
+    return (
+      <div style={{ display:"inline-flex", alignItems:"center", gap:5, padding:compact?"3px 8px":"5px 12px", borderRadius:20, background:s.bg, border:`1.5px solid ${s.border}` }}>
+        <div style={{ width:7, height:7, borderRadius:"50%", background:s.dot }}/>
+        <span style={{ fontSize:compact?10:11, fontWeight:600, color:s.color }}>{s.label}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} style={{ position:"relative", display:"inline-block" }}>
+      <div onClick={()=>setOpen(o=>!o)}
+        style={{ display:"inline-flex", alignItems:"center", gap:5, padding:compact?"3px 8px":"5px 12px", borderRadius:20, background:s.bg, border:`1.5px solid ${s.border}`, cursor:"pointer", userSelect:"none" }}>
+        <div style={{ width:7, height:7, borderRadius:"50%", background:s.dot }}/>
+        <span style={{ fontSize:compact?10:11, fontWeight:600, color:s.color }}>{s.label}</span>
+        <span style={{ fontSize:8, color:s.color }}>▾</span>
+      </div>
+      {open && (
+        <div style={{ position:"absolute", top:"calc(100% + 4px)", left:0, background:W.surface, border:`1px solid ${W.border}`, borderRadius:W.radiusMd, boxShadow:W.shadowMd, zIndex:100, minWidth:140, overflow:"hidden" }}>
+          {[
+            { key:"complete",  label:"✓ Complete",  action:onToggle },
+            { key:"pending",   label:"○ Pending",   action:onToggle },
+            { key:"dismissed", label:"⊘ Dismiss",   action:onDismiss },
+          ].map(opt => (
+            <div key={opt.key} onClick={()=>{opt.action();setOpen(false);}}
+              style={{ padding:"9px 14px", fontSize:12, fontWeight:500, cursor:"pointer", color:opt.key==="dismissed"?W.danger:W.text, background:W.surface, transition:"background .12s" }}
+              onMouseEnter={e=>e.currentTarget.style.background=W.surfaceAlt}
+              onMouseLeave={e=>e.currentTarget.style.background=W.surface}>
+              {opt.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── InlineAdd with priority toggle ───────────────────────────
+function InlineAdd({ onAdd, placeholder, compact }) {
+  const [val, setVal] = useState("");
+  const [priority, setPriority] = useState("normal");
+  const submit = () => { if(val.trim()){onAdd(val.trim(),priority);setVal("");setPriority("normal");} };
+  return (
+    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+      <button onClick={()=>setPriority(p=>p==="high"?"normal":"high")} title="Toggle priority"
+        style={{ width:22, height:22, borderRadius:"50%", background:priority==="high"?W.highBg:W.surfaceAlt, border:`1.5px solid ${priority==="high"?W.high:W.border}`, cursor:"pointer", flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center" }}>
+        <div style={{ width:8, height:8, borderRadius:"50%", background:priority==="high"?W.high:"#c0c0c0" }}/>
+      </button>
+      <input value={val} onChange={e=>setVal(e.target.value)} placeholder={placeholder||"Type task + Enter"}
+        onKeyDown={e=>{if(e.key==="Enter")submit();}}
+        style={{ flex:1, padding:compact?"5px 8px":"7px 10px", borderRadius:6, border:`1.5px dashed ${W.accent}50`, background:"transparent", fontFamily:ff, fontSize:12, color:W.text, outline:"none", minWidth:0 }}
+        onFocus={e=>e.target.style.borderColor=W.accent}
+        onBlur={e=>e.target.style.borderColor=`${W.accent}50`}/>
+      {val && <button onClick={submit} style={{ width:24, height:24, borderRadius:6, background:W.accent, border:"none", color:"#fff", fontSize:14, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>+</button>}
+    </div>
+  );
+}
+
+// ── ConfirmModal ──────────────────────────────────────────────
+function ConfirmModal({ msg, onConfirm, onClose }) {
+  return (
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.3)", zIndex:500, display:"flex", alignItems:"center", justifyContent:"center", backdropFilter:"blur(4px)" }}>
+      <Card style={{ width:360, maxWidth:"95vw", padding:28, boxShadow:W.shadowLg }}>
+        <div style={{ fontSize:15, fontWeight:600, color:W.text, marginBottom:12 }}>Confirm</div>
+        <div style={{ fontSize:13, color:W.textSec, lineHeight:1.6, marginBottom:22 }}>{msg}</div>
+        <div style={{ display:"flex", gap:10, justifyContent:"flex-end" }}>
+          <Btn onClick={onClose} variant="subtle" size="sm">Cancel</Btn>
+          <Btn onClick={onConfirm} variant="danger" size="sm">Confirm</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── History View ──────────────────────────────────────────────
+function HistoryView({ data, session }) {
+  const [sF, setSF] = useState("all");
+  const [dF, setDF] = useState("all");
+  const [stF, setStF] = useState("all");
+  const [prF, setPrF] = useState("all");
+  const td = todayStr();
+
+  let rows = [];
+  data.history.forEach(h => rows.push({...h, status:h.status||"complete"}));
+  data.colleagues.forEach(c => c.tasks.filter(t=>t.status!=="complete"&&t.status!=="dismissed").forEach(t => {
+    rows.push({ date:t.date, colleagueName:c.name, taskText:t.text, priority:t.priority||"normal", completedAt:null, status:t.date<td?"overdue":"pending" });
+  }));
+  data.colleagues.forEach(c => c.tasks.filter(t=>t.status==="dismissed").forEach(t => {
+    rows.push({ date:t.date, colleagueName:c.name, taskText:t.text, priority:t.priority||"normal", completedAt:null, status:"dismissed" });
+  }));
+
+  if (session.role==="colleague") rows=rows.filter(r=>r.colleagueName===session.name);
+  if (sF!=="all") rows=rows.filter(r=>r.colleagueName===sF);
+  if (dF!=="all") rows=rows.filter(r=>r.date===dF);
+  if (stF!=="all") rows=rows.filter(r=>r.status===stF);
+  if (prF!=="all") rows=rows.filter(r=>(r.priority||"normal")===prF);
+  rows.sort((a,b)=>b.date.localeCompare(a.date));
+
+  const dates=[...new Set([...data.history.map(h=>h.date),...data.colleagues.flatMap(c=>c.tasks.map(t=>t.date))])].sort().reverse();
+  const sel = { padding:"6px 11px", borderRadius:7, border:`1px solid ${W.border}`, background:W.surface, fontFamily:ff, fontSize:12, color:W.text, cursor:"pointer", outline:"none" };
+  const badge = s => {
+    const m={complete:[W.successBg,W.success],overdue:[W.dangerBg,W.danger],pending:[W.accentSoft,W.accent],dismissed:[W.dismissedBg,W.dismissed]};
+    const [bg,col]=m[s]||m.pending;
+    return <span style={{ padding:"2px 8px", borderRadius:20, fontSize:10, fontWeight:700, textTransform:"uppercase", background:bg, color:col }}>{s}</span>;
+  };
+
+  return (
+    <div>
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16, flexWrap:"wrap", gap:10 }}>
+        <div style={{ fontSize:18, fontWeight:700 }}>Task History</div>
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <select value={sF} onChange={e=>setSF(e.target.value)} style={sel}><option value="all">All Colleagues</option>{data.colleagues.map(c=><option key={c.id} value={c.name}>{c.name}</option>)}</select>
+          <select value={dF} onChange={e=>setDF(e.target.value)} style={sel}><option value="all">All Dates</option>{dates.map(d=><option key={d} value={d}>{d}</option>)}</select>
+          <select value={stF} onChange={e=>setStF(e.target.value)} style={sel}><option value="all">All Status</option>{["complete","pending","overdue","dismissed"].map(s=><option key={s} value={s}>{s}</option>)}</select>
+          <select value={prF} onChange={e=>setPrF(e.target.value)} style={sel}><option value="all">All Priority</option><option value="high">High</option><option value="normal">Normal</option></select>
+        </div>
+      </div>
+      <Card>
+        <table style={{ width:"100%", borderCollapse:"collapse" }}>
+          <thead>
+            <tr style={{ background:W.surfaceAlt }}>
+              {["Date","Colleague","Task","Priority","Status","Completed At"].map(h=>(
+                <th key={h} style={{ padding:"10px 14px", fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:1.2, color:W.textSec, borderBottom:`1px solid ${W.border}`, textAlign:"left" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length===0
+              ? <tr><td colSpan={6} style={{ textAlign:"center", padding:44, color:W.textTert, fontSize:13 }}>No records found</td></tr>
+              : rows.map((r,i)=>(
+                <tr key={i} style={{ borderBottom:`1px solid ${W.border}` }}>
+                  <td style={{ padding:"10px 14px", fontSize:12, color:W.textSec, fontFamily:"Consolas,monospace" }}>{r.date}</td>
+                  <td style={{ padding:"10px 14px", fontSize:13, fontWeight:600 }}>{r.colleagueName}</td>
+                  <td style={{ padding:"10px 14px", fontSize:13 }}>{r.taskText}</td>
+                  <td style={{ padding:"10px 14px" }}><PriorityDot priority={r.priority||"normal"}/></td>
+                  <td style={{ padding:"10px 14px" }}>{badge(r.status)}</td>
+                  <td style={{ padding:"10px 14px", fontSize:12, color:W.textSec, fontFamily:"Consolas,monospace" }}>{r.completedAt||"—"}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}
+
+// ── Admin View ────────────────────────────────────────────────
+const THEME_PRESETS = [
+  { name:"Windows Blue",accent:"#0067c0",bg:"#f3f3f3",surface:"#ffffff",text:"#1a1a1a",today:"#e8f4fe" },
+  { name:"Forest Green",accent:"#1a6b3c",bg:"#f2f7f4",surface:"#ffffff",text:"#1a1a1a",today:"#e4f2ea" },
+  { name:"Coral",       accent:"#c0392b",bg:"#fdf5f4",surface:"#ffffff",text:"#1a1a1a",today:"#fde8e6" },
+  { name:"Purple",      accent:"#6b21a8",bg:"#f8f4fd",surface:"#ffffff",text:"#1a1a1a",today:"#ede9fc" },
+  { name:"Slate",       accent:"#334155",bg:"#f1f5f9",surface:"#ffffff",text:"#1a1a1a",today:"#e2e8f0" },
+  { name:"Dubai Gold",  accent:"#a16207",bg:"#fefce8",surface:"#ffffff",text:"#1a1a1a",today:"#fef9c3" },
+  { name:"Dark",        accent:"#60a5fa",bg:"#0f172a",surface:"#1e293b",text:"#e2e8f0",today:"#1e3a5f" },
+  { name:"Charcoal",    accent:"#94a3b8",bg:"#1a1a1a",surface:"#262626",text:"#e8e8e8",today:"#2d3748" },
+];
+
+function AdminView({ data, persist, showToast, onAddColleague, onRemoveColleague, onNewDay }) {
+  const [orgName,setBoardName]   = useState(data.orgName);
+  const [boardTitle,setBoardTitle] = useState(data.boardTitle);
+  const [icon,setIcon]           = useState(data.icon);
+  const [pwCur,setPwCur]         = useState("");
+  const [pwNew,setPwNew]         = useState("");
+  const [pwConf,setPwConf]       = useState("");
+  const [themeVals,setThemeVals] = useState({ accent:data.themeAccent||"#0067c0", bg:data.themeBg||"#f3f3f3", surface:data.themeSurface||"#ffffff", text:data.themeText||"#1a1a1a", today:data.themeToday||"#e8f4fe" });
+
+  const saveBranding = () => { persist(prev=>({...prev,orgName,boardTitle,icon})); showToast("Branding saved","success"); };
+  const changePw = () => {
+    if(pwCur!==data.adminPw){showToast("Current password wrong","error");return;}
+    if(pwNew.length<4){showToast("Min 4 characters","error");return;}
+    if(pwNew!==pwConf){showToast("Passwords don't match","error");return;}
+    persist(prev=>({...prev,adminPw:pwNew}));
+    setPwCur("");setPwNew("");setPwConf("");
+    showToast("Password updated","success");
+  };
+  const saveTheme = () => {
+    persist(prev=>({...prev,themeAccent:themeVals.accent,themeBg:themeVals.bg,themeSurface:themeVals.surface,themeText:themeVals.text,themeToday:themeVals.today}));
+    showToast("Theme saved — reload to apply","success");
+  };
+  const exportCSV = () => {
+    const td = todayStr();
+    const rows=[["Date","Colleague","Task","Priority","Status","Completed At"]];
+    data.history.forEach(h=>rows.push([h.date,h.colleagueName,h.taskText,h.priority||"normal","complete",h.completedAt||""]));
+    data.colleagues.forEach(c=>c.tasks.filter(t=>t.status!=="complete").forEach(t=>rows.push([t.date,c.name,t.text,t.priority||"normal",t.status||"pending",""])));
+    const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+    a.download=`taskboard-${td}.csv`;a.click();
+    showToast("CSV exported","success");
+  };
+
+  const P = ({title,children,action}) => (
+    <Card style={{ padding:20, marginBottom:0 }}>
+      <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,paddingBottom:10,borderBottom:`1px solid ${W.border}` }}>
+        <div style={{ fontSize:14,fontWeight:700 }}>{title}</div>
+        {action}
+      </div>
+      {children}
+    </Card>
+  );
+
+  return (
+    <div>
+      <div style={{ fontSize:18,fontWeight:700,marginBottom:18 }}>⚙️ Admin Panel</div>
+      <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:18,alignItems:"start" }}>
+
+        {/* Colleagues */}
+        <P title="👥 Colleagues" action={<Btn onClick={onAddColleague} variant="primary" size="sm">+ Add Colleague</Btn>}>
+          <div style={{ maxHeight:360,overflowY:"auto" }}>
+            {data.colleagues.length===0&&<div style={{ textAlign:"center",color:W.textTert,padding:24,fontSize:13 }}>No colleagues yet.</div>}
+            {data.colleagues.map(c=>{
+              const done=c.tasks.filter(t=>t.date===todayStr()&&t.status==="complete").length;
+              const total=c.tasks.filter(t=>t.date===todayStr()).length;
+              return (
+                <div key={c.id} style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:W.radius,background:W.surfaceAlt,border:`1px solid ${W.border}`,marginBottom:7 }}>
+                  <div style={{ width:32,height:32,borderRadius:"50%",background:W.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:"#fff",flexShrink:0 }}>{initials(c.name)}</div>
+                  <div style={{ flex:1 }}>
+                    <div style={{ fontSize:13,fontWeight:600 }}>{c.name}</div>
+                    <div style={{ fontSize:10,color:W.textSec,fontFamily:"Consolas,monospace" }}>PIN: {c.pin} · {done}/{total} today</div>
+                  </div>
+                  <Btn onClick={()=>onRemoveColleague(c.id)} variant="danger" size="xs">Remove</Btn>
+                </div>
+              );
+            })}
+          </div>
+        </P>
+
+        {/* Controls */}
+        <div style={{ display:"flex",flexDirection:"column",gap:18 }}>
+          <P title="🔧 Board Controls">
+            <div style={{ display:"flex",flexDirection:"column",gap:10 }}>
+              {[
+                {lbl:"🌅 Start New Day",sub:"Archive complete tasks, carry forward pending",fn:onNewDay,v:"danger"},
+                {lbl:"⬇ Export CSV",sub:"Download full task log",fn:exportCSV,v:"ghost"},
+              ].map(({lbl,sub,fn,v})=>(
+                <div key={lbl} style={{ display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 13px",background:W.surfaceAlt,border:`1px solid ${W.border}`,borderRadius:W.radius }}>
+                  <div><div style={{fontSize:13}}>{lbl}</div><div style={{fontSize:11,color:W.textSec}}>{sub}</div></div>
+                  <Btn onClick={fn} variant={v} size="sm">{lbl.split(" ").slice(-1)}</Btn>
+                </div>
+              ))}
+            </div>
+          </P>
+
+          <P title="🔑 Change Password">
+            {[["Current",pwCur,setPwCur],["New",pwNew,setPwNew],["Confirm",pwConf,setPwConf]].map(([l,v,s])=>(
+              <div key={l} style={{ marginBottom:10 }}><Label>{l} Password</Label><Input type="password" value={v} onChange={e=>s(e.target.value)} placeholder={`${l} password`}/></div>
+            ))}
+            <Btn onClick={changePw} variant="primary" size="sm">Update Password</Btn>
+          </P>
+
+          <P title="🏷️ Branding">
+            {[["Organisation Name",orgName,setBoardName],["Board Title",boardTitle,setBoardTitle],["Icon (emoji)",icon,setIcon]].map(([l,v,s])=>(
+              <div key={l} style={{ marginBottom:10 }}><Label>{l}</Label><Input value={v} onChange={e=>s(e.target.value)} maxLength={l.includes("emoji")?4:undefined}/></div>
+            ))}
+            <Btn onClick={saveBranding} variant="primary" size="sm">Save Branding</Btn>
+          </P>
+        </div>
+
+        {/* Theme — full width */}
+        <P title="🎨 Theme Colours" action={<div style={{display:"flex",gap:8}}><Btn onClick={()=>{setThemeVals({accent:"#0067c0",bg:"#f3f3f3",surface:"#ffffff",text:"#1a1a1a",today:"#e8f4fe"});}} variant="subtle" size="sm">Reset</Btn><Btn onClick={saveTheme} variant="primary" size="sm">Apply & Save</Btn></div>}>
+          <div style={{ fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:1.2,color:W.textSec,marginBottom:10 }}>Quick Presets</div>
+          <div style={{ display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18 }}>
+            {THEME_PRESETS.map(p=>(
+              <button key={p.name} onClick={()=>setThemeVals({accent:p.accent,bg:p.bg,surface:p.surface,text:p.text,today:p.today})}
+                style={{ padding:"9px 6px",borderRadius:W.radius,border:`2px solid ${themeVals.accent===p.accent?p.accent:W.border}`,background:p.bg,cursor:"pointer",textAlign:"center",transition:"all .15s" }}>
+                <div style={{ width:18,height:18,borderRadius:"50%",background:p.accent,margin:"0 auto 5px" }}/>
+                <div style={{ fontSize:9,fontWeight:600,color:p.text,letterSpacing:0.3 }}>{p.name}</div>
+              </button>
+            ))}
+          </div>
+          <div style={{ fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:1.2,color:W.textSec,marginBottom:10 }}>Custom Colours</div>
+          <div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:10 }}>
+            {[["Accent",themeVals.accent,"accent"],["Background",themeVals.bg,"bg"],["Surface",themeVals.surface,"surface"],["Today Highlight",themeVals.today,"today"]].map(([l,v,k])=>(
+              <div key={k} style={{ display:"flex",alignItems:"center",gap:8,padding:"8px 10px",border:`1px solid ${W.border}`,borderRadius:W.radius,background:W.surfaceAlt }}>
+                <input type="color" value={v} onChange={e=>setThemeVals(p=>({...p,[k]:e.target.value}))} style={{ width:26,height:26,border:"none",borderRadius:5,cursor:"pointer",padding:0,background:"none",flexShrink:0 }}/>
+                <div><div style={{fontSize:11,color:W.textSec}}>{l}</div><div style={{fontSize:10,fontFamily:"Consolas,monospace",color:W.textTert}}>{v}</div></div>
+              </div>
+            ))}
+          </div>
+        </P>
+
+      </div>
+    </div>
+  );
+}
+
+// ── Add Colleague Modal ───────────────────────────────────────
+function AddColleagueModal({ onSave, onClose }) {
+  const [name, setName] = useState("");
+  const [pin, setPin]   = useState("");
+  return (
+    <div onClick={e=>{if(e.target===e.currentTarget)onClose();}} style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.3)",zIndex:500,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(6px)" }}>
+      <Card style={{ width:380,maxWidth:"95vw",padding:28,boxShadow:W.shadowLg }}>
+        <div style={{ fontSize:17,fontWeight:700,marginBottom:22 }}>Add Colleague</div>
+        <div style={{ marginBottom:14 }}><Label>Full Name</Label><Input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Ahmed Al Mansouri" autoFocus onKeyDown={e=>e.key==="Enter"&&onSave({name,pin})}/></div>
+        <div style={{ marginBottom:22 }}><Label>4-Digit PIN</Label><Input type="number" value={pin} onChange={e=>setPin(e.target.value)} placeholder="e.g. 1234" maxLength={4} onKeyDown={e=>e.key==="Enter"&&onSave({name,pin})}/></div>
+        <div style={{ display:"flex",gap:10,justifyContent:"flex-end" }}>
+          <Btn onClick={onClose} variant="subtle">Cancel</Btn>
+          <Btn onClick={()=>onSave({name,pin})} variant="primary">Add Colleague</Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ── Display Board ─────────────────────────────────────────────
+function DisplayBoard({ data, onExit }) {
+  const [tick, setTick] = useState(0);
+  const [clock, setClock] = useState({ date:"", time:"" });
+
+  useEffect(() => { const id=setInterval(()=>setTick(t=>t+1),30000); return ()=>clearInterval(id); }, []);
+  useEffect(() => {
+    const id=setInterval(()=>{const n=new Date();setClock({date:n.toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"}),time:n.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})});},1000);
+    return ()=>clearInterval(id);
+  }, []);
+
+  const td = todayStr();
+  const colleagues = data.colleagues;
+
+  const taskRows = [];
+  colleagues.forEach(c => {
+    const todayT   = c.tasks.filter(t=>t.date===td);
+    const overdueT = c.tasks.filter(t=>t.date<td&&t.status!=="complete"&&t.status!=="dismissed");
+    const rows = [...overdueT.map(t=>({...t,_overdue:true,_daysBehind:daysBetween(t.date,td)})),...todayT];
+    if(rows.length===0) taskRows.push({c,task:null});
+    else rows.forEach(task=>taskRows.push({c,task}));
+  });
+
+  const allTasks   = colleagues.flatMap(c=>c.tasks);
+  const todayAll   = allTasks.filter(t=>t.date===td);
+  const doneCount  = todayAll.filter(t=>t.status==="complete").length;
+  const overdueC   = allTasks.filter(t=>t.date<td&&t.status!=="complete"&&t.status!=="dismissed").length;
+  const highC      = todayAll.filter(t=>t.priority==="high"&&t.status!=="complete").length;
+  const rate       = todayAll.length?Math.round(doneCount/todayAll.length*100):0;
+
+  const statusCfg = (status, overdue) => {
+    if(status==="complete")  return {bg:W.successBg,color:W.success,border:"#a8d5a2",dot:W.success,label:"✓ Complete"};
+    if(status==="dismissed") return {bg:W.dismissedBg,color:W.dismissed,border:"#ccc",dot:W.dismissed,label:"⊘ Dismissed"};
+    if(overdue)               return {bg:W.dangerBg,color:W.danger,border:"#f1998f",dot:W.danger,label:"⚠ Overdue"};
+    return {bg:W.surfaceAlt,color:W.textSec,border:W.border,dot:"#c0c0c0",label:"○ Pending"};
+  };
+
+  return (
+    <div style={{ minHeight:"100vh",background:W.bg,display:"flex",flexDirection:"column",fontFamily:ff }}>
+      <div style={{ background:"rgba(255,255,255,0.92)",backdropFilter:"blur(20px)",borderBottom:`1px solid ${W.border}`,padding:"0 24px",height:60,display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100 }}>
+        <div style={{ display:"flex",alignItems:"center",gap:12 }}>
+          <div style={{ width:34,height:34,background:W.accent,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16 }}>{data.icon}</div>
+          <div>
+            <div style={{ fontSize:15,fontWeight:700 }}>{data.orgName} — {data.boardTitle}</div>
+            <div style={{ fontSize:11,color:W.textSec }}>Department Display · Read-only · Auto-refreshes every 30s</div>
+          </div>
+        </div>
+        <div style={{ display:"flex",gap:10,alignItems:"center" }}>
+          {[
+            {label:"Tasks",val:todayAll.length,col:W.accent},
+            {label:"Complete",val:doneCount,col:W.success},
+            {label:"Overdue",val:overdueC,col:overdueC>0?W.danger:W.textTert},
+            {label:"High Pri",val:highC,col:highC>0?W.high:W.textTert},
+            {label:"Rate",val:rate+"%",col:rate>=80?W.success:rate>=50?W.warning:W.danger},
+          ].map(({label,val,col})=>(
+            <div key={label} style={{ display:"flex",flexDirection:"column",alignItems:"center",padding:"5px 13px",background:W.surfaceAlt,border:`1px solid ${W.border}`,borderRadius:8,minWidth:68 }}>
+              <div style={{ fontSize:17,fontWeight:700,color:col,lineHeight:1 }}>{val}</div>
+              <div style={{ fontSize:9,color:W.textTert,textTransform:"uppercase",letterSpacing:0.8,marginTop:2 }}>{label}</div>
+            </div>
+          ))}
+          <div style={{ textAlign:"right",borderLeft:`1px solid ${W.border}`,paddingLeft:14 }}>
+            <div style={{ fontSize:22,fontWeight:700,fontFamily:"Consolas,monospace",lineHeight:1 }}>{clock.time}</div>
+            <div style={{ fontSize:10,color:W.textSec,marginTop:2 }}>{clock.date}</div>
+          </div>
+          <button onClick={onExit} style={{ padding:"6px 12px",borderRadius:7,border:`1px solid ${W.border}`,background:"transparent",cursor:"pointer",fontSize:11,color:W.textTert,fontFamily:ff }}>✕ Exit</button>
+        </div>
+      </div>
+
+      <div style={{ flex:1,padding:"16px 20px",overflowY:"auto" }}>
+        {colleagues.length===0
+          ? <div style={{ textAlign:"center",padding:80,color:W.textTert,fontSize:16 }}>No colleagues added yet.</div>
+          : <div style={{ borderRadius:12,border:`1px solid ${W.border}`,background:W.surface,boxShadow:W.shadow,overflow:"hidden" }}>
+              <table style={{ width:"100%",borderCollapse:"collapse" }}>
+                <thead>
+                  <tr style={{ background:W.todayBg }}>
+                    {["COLLEAGUE","PRI","TASK","STATUS","ADDED","DONE AT"].map((h,i)=>(
+                      <th key={h} style={{ padding:"11px 14px",background:W.todayBg,borderBottom:`2px solid ${W.accent}`,borderRight:i<5?`1px solid ${W.border}`:"none",textAlign:i===0||i===2?"left":"center",fontSize:10,fontWeight:600,letterSpacing:1.2,textTransform:"uppercase",color:W.accent,position:"sticky",top:0,zIndex:5 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {taskRows.map(({c,task},idx)=>{
+                    const showName=idx===0||taskRows[idx-1].c.id!==c.id;
+                    const overdue=!!task?._overdue;
+                    const st=task?statusCfg(task.status||"pending",overdue):null;
+                    const rowBg=task?.status==="complete"?`${W.success}06`:overdue?`${W.danger}04`:"transparent";
+                    const cDone=c.tasks.filter(t=>t.date===td&&t.status==="complete").length;
+                    const cTotal=c.tasks.filter(t=>t.date===td).length;
+                    return (
+                      <tr key={task?task.id:`empty-${c.id}`} style={{ borderBottom:`1px solid ${W.border}`,background:rowBg }}>
+                        <td style={{ padding:"10px 14px",borderRight:`2px solid ${W.border}`,background:W.surfaceAlt,verticalAlign:"middle",minWidth:170 }}>
+                          {showName
+                            ? <div style={{ display:"flex",alignItems:"center",gap:10 }}>
+                                <div style={{ position:"relative",flexShrink:0 }}>
+                                  <div style={{ width:36,height:36,borderRadius:"50%",background:W.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,fontWeight:700,color:"#fff" }}>{initials(c.name)}</div>
+                                  <div style={{ position:"absolute",top:-5,right:-5,minWidth:20,height:20,borderRadius:10,background:cDone===cTotal&&cTotal>0?W.success:cTotal===0?"#ccc":W.high,color:"#fff",fontSize:9,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 4px",border:"2px solid #fff",whiteSpace:"nowrap" }}>{cDone}/{cTotal}</div>
+                                </div>
+                                <div style={{ fontSize:14,fontWeight:600 }}>{c.name}</div>
+                              </div>
+                            : <div style={{ borderLeft:`2px solid ${W.accentSoft}`,marginLeft:18,height:22 }}/>}
+                        </td>
+                        <td style={{ padding:"10px 10px",borderRight:`1px solid ${W.border}`,verticalAlign:"middle" }}>
+                          {task?<PriorityDot priority={task.priority||"normal"}/>:<span style={{color:W.border}}>—</span>}
+                        </td>
+                        <td style={{ padding:"10px 14px",borderRight:`1px solid ${W.border}`,verticalAlign:"middle",minWidth:240 }}>
+                          {task
+                            ? <div>
+                                <div style={{ fontSize:14,color:task.status==="complete"||task.status==="dismissed"?W.textTert:W.text,textDecoration:task.status==="complete"||task.status==="dismissed"?"line-through":"none",lineHeight:1.45 }}>{task.text}</div>
+                                {overdue&&task.status!=="complete"&&task.status!=="dismissed"&&<div style={{ fontSize:11,color:W.danger,fontWeight:600,marginTop:2 }}>⚠ {task._daysBehind}d overdue</div>}
+                              </div>
+                            : <span style={{ fontSize:13,color:W.textTert,fontStyle:"italic" }}>No tasks yet</span>}
+                        </td>
+                        <td style={{ padding:"10px 12px",borderRight:`1px solid ${W.border}`,textAlign:"center",verticalAlign:"middle" }}>
+                          {task&&st
+                            ? <div style={{ display:"inline-flex",alignItems:"center",gap:5,padding:"5px 12px",borderRadius:20,background:st.bg,border:`1.5px solid ${st.border}` }}>
+                                <div style={{ width:7,height:7,borderRadius:"50%",background:st.dot }}/>
+                                <span style={{ fontSize:12,fontWeight:700,color:st.color }}>{st.label}</span>
+                              </div>
+                            : <span style={{color:W.border}}>—</span>}
+                        </td>
+                        <td style={{ padding:"10px 14px",borderRight:`1px solid ${W.border}`,textAlign:"center",verticalAlign:"middle" }}>
+                          <span style={{ fontSize:11,color:W.textSec,fontFamily:"Consolas,monospace" }}>{task?.addedAt||"—"}</span>
+                        </td>
+                        <td style={{ padding:"10px 14px",textAlign:"center",verticalAlign:"middle" }}>
+                          {task?.status==="complete"&&task?.completedAt
+                            ? <span style={{ fontSize:11,color:W.success,fontFamily:"Consolas,monospace",fontWeight:600 }}>✓ {task.completedAt}</span>
+                            : <span style={{ fontSize:11,color:W.textTert }}>—</span>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+        }
+        <div style={{ textAlign:"center",marginTop:12,fontSize:11,color:W.textTert }}>
+          {colleagues.length} colleagues · {todayAll.length} tasks today · refreshed {new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+// ── Mount the app ──
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App));
+</script>
+</body>
+</html>
