@@ -5,20 +5,20 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Team Task Board — Dubai Golf</title>
 
-<!-- React -->
+<!-- React 18 -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-<!-- Babel (transpiles JSX in the browser — no build step needed) -->
+<!-- Babel standalone (transpiles JSX in browser — no build step needed) -->
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-<!-- Firebase SDK v9 compat (works as global firebase.*) -->
+<!-- Firebase v9 compat SDK (works as global firebase.*) -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI Variable', Segoe UI, system-ui, sans-serif; }
+  body { font-family: "Segoe UI Variable", Segoe UI, system-ui, sans-serif; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: #f3f3f3; }
   ::-webkit-scrollbar-thumb { background: #c8c8c8; border-radius: 3px; }
@@ -35,8 +35,9 @@
 </style>
 </head>
 <body>
+
+<!-- Initial loading indicator shown before Babel finishes transpiling -->
 <div id="root">
-  <!-- Loading indicator while Babel transpiles -->
   <div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:Segoe UI,sans-serif;background:#f3f3f3;gap:16px">
     <div style="width:40px;height:40px;border:4px solid #e0e0e0;border-top-color:#0067c0;border-radius:50%;animation:spin 0.8s linear infinite"></div>
     <div style="font-size:14px;color:#5d5d5d">Loading TaskBoard…</div>
@@ -44,18 +45,25 @@
 </div>
 
 <script type="text/babel" data-presets="react">
-// ── Make React hooks available as globals (Babel transforms JSX but not imports) ──
+// ── Make React hooks available as globals ──────────────────────
 const { useState, useEffect, useCallback, useRef } = React;
 
-// ── Bridge: expose Firebase modular-style functions via window.__fb* ──
-// The compat SDK is loaded above. We wrap it to match the modular API
-// that getFirebase() and useStore() expect.
-window.__fbInit    = (config) => firebase.initializeApp(config);
-window.__fbGetDb   = (app)    => firebase.database(app);
-window.__fbRef     = (db, path) => db.ref(path);
-window.__fbOnValue = (ref, cb, errCb) => { ref.on('value', cb, errCb); return () => ref.off('value', cb); };
-window.__fbSet     = (ref, val) => ref.set(val);
-window.__fbOff     = (ref, cb) => ref.off('value', cb);
+// ── Firebase compat bridge ─────────────────────────────────────
+// Maps the modular-style API calls in useStore() to the compat SDK globals.
+// The compat SDK (loaded via <script> above) exposes firebase.* globally.
+window.__fbInit    = (config) => {
+  // Prevent double-initialisation on hot reload
+  return firebase.apps.length ? firebase.app() : firebase.initializeApp(config);
+};
+window.__fbGetDb   = (app)        => firebase.database(app);
+window.__fbRef     = (db, path)   => db.ref(path);
+window.__fbOnValue = (ref, cb, errCb) => {
+  ref.on("value", cb, errCb);
+  // Return an unsubscribe function
+  return () => ref.off("value", cb);
+};
+window.__fbSet     = (ref, val)   => ref.set(val);
+window.__fbOff     = (ref, cb)    => ref.off("value", cb);
 window.__fbReady   = true;
 
 
@@ -91,7 +99,7 @@ const FB_CONFIG = {
   appId:             "1:245914870067:web:8aefa00e66e6820e2c1e46",
 };
 
-// ── Firebase SDK (loaded via <script> tags below, exposed on window) ─
+// ── Firebase SDK (exposed on window via compat bridge below) ─
 let _fbApp = null;
 let _fbDb  = null;
 
@@ -336,10 +344,7 @@ function App() {
   const showToast = (msg, type="info") => { setToast({msg,type}); setTimeout(()=>setToast(null),3000); };
   const confirm = (msg, onConfirm) => setConfirmModal({ msg, onConfirm });
 
-  if (!session) return <Login data={data} onLogin={s=>{setSession(s);setView("board");}}/>;
-  if (session.role === "display") return <DisplayBoard data={data} onExit={()=>setSession(null)}/>;
-
-  // Loading spinner
+  // ── Gate 1: Firebase still connecting ────────────────────────
   if (loading) return (
     <div style={{ minHeight:"100vh", background:W.bg, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", fontFamily:ff, gap:16 }}>
       <div style={{ width:44, height:44, border:`4px solid ${W.border}`, borderTopColor:W.accent, borderRadius:"50%", animation:"spin 0.8s linear infinite" }}/>
@@ -348,7 +353,7 @@ function App() {
     </div>
   );
 
-  // Firebase error
+  // ── Gate 2: Firebase error ────────────────────────────────────
   if (fbError) return (
     <div style={{ minHeight:"100vh", background:W.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:ff }}>
       <div style={{ background:W.dangerBg, border:`1px solid #f1998f`, borderRadius:W.radiusMd, padding:"32px 40px", maxWidth:440, textAlign:"center" }}>
@@ -357,11 +362,15 @@ function App() {
         <div style={{ fontSize:13, color:W.text, lineHeight:1.7, marginBottom:20 }}>{fbError}</div>
         <div style={{ fontSize:12, color:W.textSec, lineHeight:1.6 }}>
           Check that your Firebase Realtime Database is enabled and the Security Rules allow read/write.<br/><br/>
-          Go to <strong>console.firebase.google.com</strong> → your project → Realtime Database → Rules → set to <code style={{background:"#f0f0f0",padding:"1px 5px",borderRadius:3}}>{`{"rules":{".read":"true",".write":"true"}}`}</code>
+          Go to <strong>console.firebase.google.com</strong> → your project → Realtime Database → Rules → set to <code style={{background:"#f0f0f0",padding:"1px 5px",borderRadius:3}}>{`{"rules":{"taskboard":{".read":"true",".write":"true"}}}`}</code>
         </div>
       </div>
     </div>
   );
+
+  // ── Gate 3: Not logged in ─────────────────────────────────────
+  if (!session) return <Login data={data} onLogin={s=>{setSession(s);setView("board");}}/>;
+  if (session.role === "display") return <DisplayBoard data={data} onExit={()=>setSession(null)}/>;
 
   const isAdmin = session.role === "admin";
   const td = todayStr();
@@ -1319,8 +1328,8 @@ function DisplayBoard({ data, onExit }) {
 
 
 
-// ── Mount the app ──
-const root = ReactDOM.createRoot(document.getElementById('root'));
+// ── Mount the app ──────────────────────────────────────────────
+const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(React.createElement(App));
 </script>
 </body>
