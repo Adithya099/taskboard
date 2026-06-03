@@ -1,0 +1,1389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Team Task Board — Dubai Golf</title>
+
+<!-- Firebase v9 compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+<style>
+:root {
+  --acc: #0067c0; --acc2: #40a9ff; --bg: #f3f3f3;
+  --sur: #ffffff; --sur2: #f9f9f9; --bdr: #e0e0e0;
+  --txt: #1a1a1a; --txt2: #5d5d5d; --txt3: #9a9a9a;
+  --ok: #107c10; --okbg: #dff0d8;
+  --warn: #9f6000; --warnbg: #fff4ce;
+  --err: #c42b1c; --errbg: #fde7e9;
+  --hi: #c42b1c; --hibg: #fde7e9;
+  --dis: #6b6b6b; --disbg: #f0f0f0;
+  --tdy: #e8f4fe;
+  --ff: "Segoe UI Variable", Segoe UI, system-ui, sans-serif;
+  --r: 8px; --r2: 10px;
+  --sh: 0 2px 8px rgba(0,0,0,.08),0 0 1px rgba(0,0,0,.05);
+  --shl: 0 8px 32px rgba(0,0,0,.12);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--ff);background:var(--bg);color:var(--txt);font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#c8c8c8;border-radius:3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.fadeIn{animation:fadeIn .25s ease both}
+
+/* ── SCREENS ── */
+.screen{display:none;min-height:100vh}
+.screen.active{display:flex}
+
+/* ── SPINNER ── */
+#screen-loading{align-items:center;justify-content:center;flex-direction:column;gap:14px;background:var(--bg)}
+.spinner{width:40px;height:40px;border:4px solid var(--bdr);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
+
+/* ── ERROR ── */
+#screen-error{align-items:center;justify-content:center;background:var(--bg);padding:24px}
+.error-box{background:var(--errbg);border:1px solid #f1998f;border-radius:var(--r2);padding:32px 36px;max-width:500px;text-align:center}
+.error-box h2{color:var(--err);margin-bottom:10px;font-size:17px}
+.error-box p{color:var(--txt2);font-size:13px;line-height:1.7;margin-bottom:10px}
+.error-box code{background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:12px;font-family:Consolas,monospace}
+
+/* ── LOGIN ── */
+#screen-login{align-items:center;justify-content:center;background:var(--bg);position:relative;overflow:hidden}
+#screen-login::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 60% 20%,#daeeff 0%,transparent 70%),radial-gradient(ellipse 60% 50% at 20% 80%,#e8f5e8 0%,transparent 60%);pointer-events:none}
+.login-card{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r2);box-shadow:var(--shl);padding:40px 36px;width:400px;max-width:95vw;position:relative;z-index:1}
+.login-icon{width:56px;height:56px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 14px;box-shadow:0 4px 16px rgba(0,103,192,.35)}
+.login-org{font-size:20px;font-weight:700;text-align:center}
+.login-sub{font-size:12px;color:var(--txt2);text-align:center;margin-top:3px;margin-bottom:28px}
+.role-tabs{display:grid;grid-template-columns:1fr 1fr 1fr;background:var(--sur2);border-radius:var(--r);padding:3px;margin-bottom:22px;border:1px solid var(--bdr)}
+.role-tab{padding:8px 4px;text-align:center;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;color:var(--txt2);transition:all .15s;user-select:none}
+.role-tab.active{background:var(--sur);color:var(--acc);box-shadow:var(--sh)}
+.field{margin-bottom:15px}
+.field label{display:block;font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px}
+.field input,.field select{width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:var(--r);font-family:var(--ff);font-size:13px;color:var(--txt);background:var(--sur);outline:none;transition:border-color .15s}
+.field input:focus,.field select:focus{border-color:var(--acc)}
+.login-info{padding:13px 15px;background:var(--tdy);border:1px solid rgba(0,103,192,.25);border-radius:var(--r);font-size:12px;color:var(--txt2);margin-bottom:16px;line-height:1.6}
+.login-info strong{color:var(--acc)}
+.login-error{color:var(--err);font-size:12px;background:var(--errbg);padding:8px 12px;border-radius:6px;margin-bottom:12px}
+.btn-primary{width:100%;padding:12px;border-radius:var(--r);border:none;cursor:pointer;font-family:var(--ff);font-size:14px;font-weight:600;color:#fff;transition:all .15s}
+
+/* ── APP SHELL ── */
+#screen-app{flex-direction:column;background:var(--bg)}
+.app-header{background:rgba(255,255,255,.88);backdrop-filter:blur(20px);border-bottom:1px solid var(--bdr);padding:0 20px;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-icon{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:14px}
+.brand-name{font-size:14px;font-weight:700;line-height:1.1}
+.brand-sub{font-size:10px;color:var(--txt2)}
+.nav{display:flex;gap:2px;background:var(--sur2);border-radius:22px;padding:3px;border:1px solid var(--bdr)}
+.nav-btn{padding:6px 14px;border-radius:20px;border:none;cursor:pointer;font-size:12px;font-weight:600;color:var(--txt2);background:transparent;font-family:var(--ff);transition:all .15s}
+.nav-btn.active{color:#fff}
+.user-badge{display:flex;align-items:center;gap:8px;background:var(--sur2);border:1px solid var(--bdr);border-radius:var(--r);padding:5px 12px;cursor:pointer}
+.user-avatar{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff}
+.user-name{font-size:12px;font-weight:600}
+.user-role{font-size:10px;font-weight:600}
+.app-main{padding:18px 20px;flex:1}
+
+/* ── STATS ── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px}
+.stat-card{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r2);box-shadow:var(--sh);padding:14px 16px;display:flex;align-items:center;gap:12px}
+.stat-icon{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px}
+.stat-val{font-size:22px;font-weight:700;line-height:1}
+.stat-lbl{font-size:10px;color:var(--txt2);margin-top:2px;text-transform:uppercase;letter-spacing:.8px}
+
+/* ── TOOLBAR ── */
+.toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px}
+.date-pill{padding:6px 14px;border-radius:20px;background:var(--tdy);border:1.5px solid rgba(0,103,192,.3);font-size:13px;font-weight:700;color:var(--acc);white-space:nowrap}
+.search-wrap{position:relative;flex:1;min-width:160px;max-width:280px}
+.search-wrap input{width:100%;padding:7px 10px 7px 30px;border-radius:20px;border:1px solid var(--bdr);font-family:var(--ff);font-size:12px;color:var(--txt);outline:none;background:var(--sur)}
+.search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:13px;color:var(--txt3);pointer-events:none}
+.search-clear{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--txt3);cursor:pointer}
+.filter-select{padding:7px 12px;border-radius:var(--r);border:1px solid var(--bdr);background:var(--sur);font-family:var(--ff);font-size:12px;color:var(--txt);cursor:pointer;outline:none}
+.toolbar-btns{display:flex;gap:8px}
+.btn{padding:6px 13px;border-radius:var(--r);border:none;cursor:pointer;font-family:var(--ff);font-size:12px;font-weight:600;transition:all .15s;display:inline-flex;align-items:center;gap:5px}
+.btn-acc{background:var(--acc);color:#fff}
+.btn-acc:hover{background:#0057a8}
+.btn-ghost{background:transparent;border:1.5px solid var(--bdr);color:var(--acc)}
+.btn-ghost:hover{border-color:var(--acc)}
+.btn-danger{background:var(--errbg);color:var(--err);border:1px solid #f1998f}
+.btn-danger:hover{background:#f8d0d0}
+
+/* ── TABLE ── */
+.table-wrap{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r2);box-shadow:var(--sh);overflow:hidden}
+.board-table{width:100%;border-collapse:collapse}
+.board-table th{padding:10px 13px;background:var(--tdy);border-bottom:2px solid var(--acc);border-right:1px solid var(--bdr);font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1.2px;color:var(--acc);white-space:nowrap;position:sticky;top:0;z-index:5}
+.board-table th:last-child{border-right:none}
+.board-table td{padding:9px 13px;border-bottom:1px solid var(--bdr);border-right:1px solid var(--bdr);vertical-align:middle;font-size:13px}
+.board-table td:last-child{border-right:none}
+.board-table tr:last-child td{border-bottom:none}
+.board-table tr:hover td{background:rgba(0,103,192,.02)}
+.col-name{background:var(--sur2)!important;border-right:2px solid var(--bdr)!important;min-width:150px}
+.avatar{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.indent-bar{border-left:2px solid rgba(0,103,192,.2);margin-left:15px;height:18px}
+.task-text{font-size:13px;line-height:1.4}
+.task-text.done{text-decoration:line-through;color:var(--txt3)}
+.task-text.dismissed{text-decoration:line-through;color:var(--txt3)}
+.overdue-tag{font-size:10px;color:var(--err);font-weight:600;margin-top:2px}
+.add-task-input{width:100%;padding:6px 10px;border:1.5px dashed rgba(0,103,192,.4);border-radius:6px;font-family:var(--ff);font-size:12px;color:var(--txt);background:transparent;outline:none}
+.add-task-input:focus{border-color:var(--acc);background:var(--tdy)}
+.mono{font-family:Consolas,monospace;font-size:11px;color:var(--txt2)}
+.mono.done{color:var(--ok);font-weight:600}
+
+/* ── STATUS BADGE ── */
+.status-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:20px;font-size:11px;font-weight:600;border:1.5px solid;cursor:default;position:relative;user-select:none}
+.status-pill.clickable{cursor:pointer}
+.status-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.status-dropdown{position:absolute;top:calc(100% + 4px);left:0;background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r2);box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:50;min-width:140px;overflow:hidden;display:none}
+.status-dropdown.open{display:block}
+.status-option{padding:9px 14px;font-size:12px;cursor:pointer;color:var(--txt);transition:background .12s}
+.status-option:hover{background:var(--sur2)}
+
+/* ── PRIORITY DOT ── */
+.pri{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600}
+.pri-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.pri-toggle{cursor:pointer;padding:3px 8px;border-radius:12px;border:1px solid var(--bdr);background:var(--sur2);transition:all .15s}
+.pri-toggle:hover{border-color:var(--acc)}
+
+/* ── EMPTY / ADD ROW ── */
+.empty-cell{color:rgba(0,0,0,.15);text-align:center}
+.add-row td{background:rgba(0,103,192,.025)!important}
+
+/* ── HISTORY VIEW ── */
+.hist-filters{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+.hist-title{font-size:18px;font-weight:700}
+.hist-selects{display:flex;gap:8px;flex-wrap:wrap}
+
+/* ── ADMIN VIEW ── */
+.admin-title{font-size:18px;font-weight:700;margin-bottom:18px}
+.admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;align-items:start}
+.admin-card{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r2);box-shadow:var(--sh);overflow:hidden}
+.admin-card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--bdr)}
+.admin-card-title{font-size:14px;font-weight:700}
+.admin-card-body{padding:18px}
+.admin-section-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--txt2);margin-bottom:10px}
+.colleague-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r);background:var(--sur2);border:1px solid var(--bdr);margin-bottom:8px}
+.colleague-name{font-size:13px;font-weight:600}
+.colleague-meta{font-size:11px;color:var(--txt2);margin-top:1px;font-family:Consolas,monospace}
+.action-row{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--sur2);border:1px solid var(--bdr);border-radius:var(--r);margin-bottom:9px}
+.action-label{font-size:13px}
+.action-sub{font-size:11px;color:var(--txt2);margin-top:2px}
+.color-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.color-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--bdr);border-radius:var(--r);background:var(--sur2)}
+.color-row input[type=color]{width:26px;height:26px;border:none;border-radius:5px;cursor:pointer;padding:0;flex-shrink:0}
+.color-info{flex:1}
+.color-lbl{font-size:11px;color:var(--txt2)}
+.color-val{font-family:Consolas,monospace;font-size:11px;color:var(--txt3)}
+.preset-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
+.preset-btn{padding:9px 6px;border-radius:var(--r);border:2px solid var(--bdr);cursor:pointer;text-align:center;transition:all .15s}
+.preset-btn:hover{border-color:var(--acc)}
+.preset-dot{width:18px;height:18px;border-radius:50%;margin:0 auto 5px}
+.preset-name{font-size:9px;font-weight:600;letter-spacing:.3px}
+
+/* ── DISPLAY BOARD ── */
+#screen-display{flex-direction:column;background:var(--bg)}
+.display-header{background:rgba(255,255,255,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--bdr);padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100}
+.disp-brand{display:flex;align-items:center;gap:12px}
+.disp-stats{display:flex;gap:10px;align-items:center}
+.disp-stat{display:flex;flex-direction:column;align-items:center;padding:5px 13px;background:var(--sur2);border:1px solid var(--bdr);border-radius:8px;min-width:68px}
+.disp-stat-val{font-size:17px;font-weight:700;line-height:1}
+.disp-stat-lbl{font-size:9px;color:var(--txt3);text-transform:uppercase;letter-spacing:.8px;margin-top:2px}
+.clock{text-align:right;border-left:1px solid var(--bdr);padding-left:14px}
+.clock-time{font-size:22px;font-weight:700;font-family:Consolas,monospace;line-height:1}
+.clock-date{font-size:10px;color:var(--txt2);margin-top:2px}
+.display-body{flex:1;padding:16px 20px;overflow-y:auto}
+
+/* ── MODAL / CONFIRM ── */
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:300;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
+.modal-overlay.open{display:flex}
+.modal-box{background:var(--sur);border:1px solid var(--bdr);border-radius:var(--r2);padding:28px;width:380px;max-width:95vw;box-shadow:var(--shl)}
+.modal-title{font-size:17px;font-weight:700;margin-bottom:18px}
+.modal-text{font-size:13px;color:var(--txt2);line-height:1.6;margin-bottom:20px}
+.modal-actions{display:flex;gap:9px;justify-content:flex-end}
+
+/* ── TOAST ── */
+#toast{position:fixed;bottom:20px;right:20px;z-index:9999;padding:12px 18px;border-radius:var(--r2);font-size:13px;font-weight:500;box-shadow:0 4px 16px rgba(0,0,0,.15);display:none;animation:fadeIn .2s ease}
+#toast.ok{background:var(--okbg);border:1px solid #a8d5a2;color:var(--ok)}
+#toast.err{background:var(--errbg);border:1px solid #f1998f;color:var(--err)}
+#toast.inf{background:#e8f0fe;border:1px solid #90c8f0;color:var(--acc)}
+
+/* ── MOBILE ── */
+@media(max-width:700px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .admin-grid{grid-template-columns:1fr}
+  .desktop-only{display:none!important}
+  .disp-stats{display:none}
+  .board-table th:nth-child(n+4),.board-table td:nth-child(n+4){display:none}
+}
+</style>
+</head>
+<body>
+
+<!-- SPINNER -->
+<div id="screen-loading" class="screen active">
+  <div class="spinner"></div>
+  <div style="font-size:14px;color:var(--txt2)">Connecting to Firebase…</div>
+</div>
+
+<!-- ERROR -->
+<div id="screen-error" class="screen">
+  <div class="error-box fadeIn">
+    <div style="font-size:32px;margin-bottom:14px">⚠️</div>
+    <h2>Firebase Connection Error</h2>
+    <p id="error-message">Unable to connect.</p>
+    <p>Go to <strong>console.firebase.google.com</strong> → Realtime Database → Rules and set:<br>
+    <code>{"rules":{"taskboard":{".read":"true",".write":"true"}}}</code></p>
+    <button class="btn btn-acc" style="margin-top:16px;width:100%;padding:10px;font-size:13px" onclick="location.reload()">Retry</button>
+  </div>
+</div>
+
+<!-- LOGIN -->
+<div id="screen-login" class="screen">
+  <div class="login-card fadeIn">
+    <div class="login-icon" id="login-icon" style="background:linear-gradient(135deg,var(--acc),var(--acc2))">⛳</div>
+    <div class="login-org" id="login-org">Dubai Golf</div>
+    <div class="login-sub" id="login-board">Team Task Board</div>
+
+    <div class="role-tabs">
+      <div class="role-tab active" data-role="colleague" onclick="setRole('colleague')">👤 Colleague</div>
+      <div class="role-tab" data-role="admin" onclick="setRole('admin')">🔑 Admin</div>
+      <div class="role-tab" data-role="display" onclick="setRole('display')">📺 Display</div>
+    </div>
+
+    <div id="role-colleague">
+      <div class="field"><label>Your Name</label>
+        <select id="login-colleague-select"><option value="">Select your name…</option></select>
+      </div>
+      <div class="field"><label>PIN</label>
+        <input type="password" id="login-pin" maxlength="4" placeholder="4-digit PIN" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+    </div>
+    <div id="role-admin" style="display:none">
+      <div class="field"><label>Admin Password</label>
+        <input type="password" id="login-pw" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+    </div>
+    <div id="role-display" style="display:none">
+      <div class="login-info"><strong>📺 Department Display Mode</strong><br>Read-only board for wall screen / TV. Shows all colleagues and all tasks. Auto-refreshes every 30s. No PIN required.</div>
+    </div>
+
+    <div id="login-err" class="login-error" style="display:none"></div>
+    <button id="login-btn" class="btn-primary" onclick="doLogin()" style="background:var(--acc)">Sign In</button>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="screen-app" class="screen">
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-icon" id="hdr-icon" style="background:var(--acc)">⛳</div>
+      <div><div class="brand-name" id="hdr-org">Dubai Golf</div><div class="brand-sub" id="hdr-board">Team Task Board</div></div>
+    </div>
+    <div class="nav">
+      <button class="nav-btn active" id="nav-board" onclick="showView('board')" style="background:var(--acc)">📅 Board</button>
+      <button class="nav-btn" id="nav-history" onclick="showView('history')">📜 History</button>
+      <button class="nav-btn admin-only" id="nav-admin" onclick="showView('admin')" style="display:none">⚙️ Admin</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="desktop-only" id="hdr-clock" style="font-size:11px;color:var(--txt2);text-align:right;line-height:1.5">
+        <div id="clock-date" style="font-weight:600;color:var(--txt)"></div>
+        <div id="clock-time" style="font-family:Consolas,monospace"></div>
+      </div>
+      <div class="user-badge" onclick="doLogout()">
+        <div class="avatar" id="hdr-avatar" style="background:var(--acc)">–</div>
+        <div><div class="user-name" id="hdr-username">–</div><div class="user-role" id="hdr-userrole">–</div></div>
+        <span style="font-size:10px;color:var(--txt3);margin-left:3px">↩</span>
+      </div>
+    </div>
+  </header>
+  <div class="app-main">
+    <!-- Board view -->
+    <div id="view-board">
+      <div class="stats" id="stats-bar"></div>
+      <div class="toolbar">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;flex-wrap:wrap">
+          <div class="date-pill" id="date-pill">📅 Today</div>
+          <div class="search-wrap">
+            <span class="search-icon">🔍</span>
+            <input id="search-input" placeholder="Search tasks or names…" oninput="renderBoard()">
+            <span class="search-clear" id="search-clear" style="display:none" onclick="clearSearch()">✕</span>
+          </div>
+          <select class="filter-select" id="name-filter" onchange="renderBoard()">
+            <option value="all">All Colleagues</option>
+          </select>
+        </div>
+        <div class="toolbar-btns">
+          <button class="btn btn-acc admin-only" id="btn-add-colleague" style="display:none" onclick="openModal('add-colleague')">+ Add Colleague</button>
+          <button class="btn btn-danger admin-only" id="btn-new-day" style="display:none" onclick="confirmNewDay()">🌅 New Day</button>
+        </div>
+      </div>
+      <div class="table-wrap"><div style="overflow-x:auto">
+        <table class="board-table" id="board-table">
+          <thead><tr>
+            <th style="text-align:left">Colleague</th>
+            <th style="text-align:left;min-width:40px">Pri</th>
+            <th style="text-align:left;min-width:220px">Task</th>
+            <th style="min-width:130px">Status</th>
+            <th class="desktop-only">Added</th>
+            <th class="desktop-only">Completed</th>
+            <th style="min-width:40px">Act</th>
+          </tr></thead>
+          <tbody id="board-tbody"></tbody>
+        </table>
+      </div></div>
+    </div>
+
+    <!-- History view -->
+    <div id="view-history" style="display:none">
+      <div class="hist-filters">
+        <div class="hist-title">Task History</div>
+        <div class="hist-selects">
+          <select class="filter-select" id="hist-colleague" onchange="renderHistory()"><option value="all">All Colleagues</option></select>
+          <select class="filter-select" id="hist-date" onchange="renderHistory()"><option value="all">All Dates</option></select>
+          <select class="filter-select" id="hist-status" onchange="renderHistory()">
+            <option value="all">All Status</option>
+            <option value="complete">Completed</option>
+            <option value="overdue">Overdue</option>
+            <option value="pending">Pending</option>
+            <option value="dismissed">Dismissed</option>
+          </select>
+          <button class="btn btn-ghost" onclick="exportCSV()">⬇ Export</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="board-table" style="width:100%">
+          <thead><tr>
+            <th style="text-align:left">Date</th>
+            <th style="text-align:left">Colleague</th>
+            <th style="text-align:left">Task</th>
+            <th>Priority</th>
+            <th>Status</th>
+            <th class="desktop-only">Completed At</th>
+          </tr></thead>
+          <tbody id="hist-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Admin view -->
+    <div id="view-admin" style="display:none">
+      <div class="admin-title">⚙️ Admin Panel</div>
+      <div class="admin-grid">
+        <!-- Colleagues -->
+        <div class="admin-card">
+          <div class="admin-card-header">
+            <div class="admin-card-title">👥 Colleagues</div>
+            <button class="btn btn-acc" onclick="openModal('add-colleague')">+ Add Colleague</button>
+          </div>
+          <div class="admin-card-body" style="max-height:400px;overflow-y:auto" id="admin-colleague-list"></div>
+        </div>
+        <!-- Right column -->
+        <div style="display:flex;flex-direction:column;gap:18px">
+          <!-- Controls -->
+          <div class="admin-card">
+            <div class="admin-card-header"><div class="admin-card-title">🔧 Board Controls</div></div>
+            <div class="admin-card-body">
+              <div class="action-row"><div><div class="action-label">🌅 Start New Day</div><div class="action-sub">Archive done tasks, carry forward pending</div></div><button class="btn btn-danger" onclick="confirmNewDay()">Reset</button></div>
+              <div class="action-row"><div><div class="action-label">⬇ Export CSV</div><div class="action-sub">Download full task log</div></div><button class="btn btn-ghost" onclick="exportCSV()">Export</button></div>
+            </div>
+          </div>
+          <!-- Password -->
+          <div class="admin-card">
+            <div class="admin-card-header"><div class="admin-card-title">🔑 Change Password</div></div>
+            <div class="admin-card-body">
+              <div class="field"><label>Current</label><input type="password" id="pw-cur" placeholder="Current password"></div>
+              <div class="field"><label>New</label><input type="password" id="pw-new" placeholder="New password"></div>
+              <div class="field"><label>Confirm</label><input type="password" id="pw-conf" placeholder="Confirm new password"></div>
+              <button class="btn btn-acc" onclick="changePassword()">Update Password</button>
+            </div>
+          </div>
+          <!-- Branding -->
+          <div class="admin-card">
+            <div class="admin-card-header"><div class="admin-card-title">🏷️ Branding</div></div>
+            <div class="admin-card-body">
+              <div class="field"><label>Organisation Name</label><input id="brand-org" value="Dubai Golf"></div>
+              <div class="field"><label>Board Title</label><input id="brand-board" value="Team Task Board"></div>
+              <div class="field"><label>Icon (emoji)</label><input id="brand-icon" value="⛳" maxlength="4"></div>
+              <button class="btn btn-acc" onclick="saveBranding()">Save Branding</button>
+            </div>
+          </div>
+        </div>
+        <!-- Theme — full width -->
+        <div class="admin-card" style="grid-column:1/-1">
+          <div class="admin-card-header">
+            <div class="admin-card-title">🎨 Theme Colours</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost" onclick="resetTheme()">Reset</button>
+              <button class="btn btn-acc" onclick="applyTheme()">Apply & Save</button>
+            </div>
+          </div>
+          <div class="admin-card-body">
+            <div class="admin-section-title">Quick Presets</div>
+            <div class="preset-grid" id="preset-grid"></div>
+            <div class="admin-section-title">Custom Colours</div>
+            <div class="color-grid" id="color-pickers"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- DISPLAY BOARD -->
+<div id="screen-display" class="screen">
+  <div class="display-header">
+    <div class="disp-brand">
+      <div class="brand-icon" id="disp-icon" style="width:36px;height:36px;border-radius:9px;font-size:18px;background:var(--acc)">⛳</div>
+      <div><div style="font-size:15px;font-weight:700" id="disp-org">Dubai Golf</div><div style="font-size:11px;color:var(--txt2)">Department Display · Auto-refreshes every 30s</div></div>
+    </div>
+    <div class="disp-stats" id="disp-stats"></div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="clock"><div class="clock-time" id="disp-time"></div><div class="clock-date" id="disp-date"></div></div>
+      <button class="btn btn-ghost" onclick="doLogout()">✕ Exit</button>
+    </div>
+  </div>
+  <div class="display-body">
+    <div class="table-wrap"><div style="overflow-x:auto">
+      <table class="board-table" id="disp-table">
+        <thead><tr>
+          <th style="text-align:left">Colleague</th>
+          <th>Pri</th>
+          <th style="text-align:left;min-width:240px">Task</th>
+          <th>Status</th>
+          <th class="desktop-only">Added</th>
+          <th class="desktop-only">Done At</th>
+        </tr></thead>
+        <tbody id="disp-tbody"></tbody>
+      </table>
+    </div></div>
+    <div style="text-align:center;margin-top:12px;font-size:11px;color:var(--txt3)" id="disp-footer"></div>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div class="modal-overlay" id="modal-add-colleague">
+  <div class="modal-box">
+    <div class="modal-title">Add Colleague</div>
+    <div class="field"><label>Full Name</label><input id="nc-name" placeholder="e.g. Ahmed Al Mansouri" onkeydown="if(event.key==='Enter')saveColleague()"></div>
+    <div class="field"><label>4-Digit PIN</label><input type="number" id="nc-pin" placeholder="e.g. 1234" maxlength="4" onkeydown="if(event.key==='Enter')saveColleague()"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('add-colleague')">Cancel</button>
+      <button class="btn btn-acc" onclick="saveColleague()">Add</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-confirm">
+  <div class="modal-box">
+    <div class="modal-title">Confirm</div>
+    <div class="modal-text" id="confirm-text"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('confirm')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-ok" onclick="runConfirm()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ══════════════════════════════════════════
+//  FIREBASE INIT
+// ══════════════════════════════════════════
+const FB_CONFIG = {
+  apiKey:            "AIzaSyAgkQNAnfuZI-q1LcTPEzWpi2O17UJXJ0s",
+  authDomain:        "viya-taskboard.firebaseapp.com",
+  databaseURL:       "https://viya-taskboard-default-rtdb.firebaseio.com",
+  projectId:         "viya-taskboard",
+  storageBucket:     "viya-taskboard.firebasestorage.app",
+  messagingSenderId: "245914870067",
+  appId:             "1:245914870067:web:8aefa00e66e6820e2c1e46"
+};
+
+const fbApp = firebase.apps.length ? firebase.app() : firebase.initializeApp(FB_CONFIG);
+const db    = firebase.database(fbApp);
+const ROOT  = db.ref("taskboard");
+
+// ══════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════
+let DATA    = null;   // live copy from Firebase
+let SESSION = null;   // { role, name, colleagueId? }
+let VIEW    = "board";
+let CONFIRM_FN = null;
+
+const THEMES = [
+  { name:"Windows Blue", acc:"#0067c0", bg:"#f3f3f3", sur:"#ffffff", tdy:"#e8f4fe" },
+  { name:"Forest Green", acc:"#1a6b3c", bg:"#f2f7f4", sur:"#ffffff", tdy:"#e4f2ea" },
+  { name:"Coral",        acc:"#c0392b", bg:"#fdf5f4", sur:"#ffffff", tdy:"#fde8e6" },
+  { name:"Purple",       acc:"#6b21a8", bg:"#f8f4fd", sur:"#ffffff", tdy:"#ede9fc" },
+  { name:"Slate",        acc:"#334155", bg:"#f1f5f9", sur:"#ffffff", tdy:"#e2e8f0" },
+  { name:"Dubai Gold",   acc:"#a16207", bg:"#fefce8", sur:"#ffffff", tdy:"#fef9c3" },
+  { name:"Dark",         acc:"#60a5fa", bg:"#0f172a", sur:"#1e293b", tdy:"#1e3a5f" },
+  { name:"Charcoal",     acc:"#94a3b8", bg:"#1a1a1a", sur:"#262626", tdy:"#2d3748" },
+];
+
+// ══════════════════════════════════════════
+//  FIREBASE LISTENER — single source of truth
+// ══════════════════════════════════════════
+ROOT.on("value", snap => {
+  try {
+    const val = snap.val();
+    if (!val) {
+      const defaults = {
+        colleagues:[], history:[],
+        adminPw:"admin1234",
+        orgName:"Dubai Golf", boardTitle:"Team Task Board", icon:"⛳"
+      };
+      ROOT.set(defaults);
+      DATA = defaults;
+    } else {
+      DATA = {
+        ...val,
+        colleagues: val.colleagues ? Object.values(val.colleagues).map(c=>({
+          ...c, tasks: c.tasks ? Object.values(c.tasks) : []
+        })) : [],
+        history: val.history ? Object.values(val.history) : []
+      };
+    }
+
+    if (getScreen() === "loading") {
+      showScreen(SESSION ? (SESSION.role==="display" ? "display" : "app") : "login");
+      if (DATA) syncLoginDropdown();
+    }
+
+    refreshUI();
+  } catch(e) {
+    console.error("ROOT.on error:", e);
+    document.getElementById("error-message").textContent = "App error: " + e.message;
+    showScreen("error");
+  }
+}, err => {
+  console.error("Firebase error:", err);
+  document.getElementById("error-message").textContent =
+    "Firebase error: " + err.message +
+    "\n\nCheck your Realtime Database Security Rules — path 'taskboard' must allow .read and .write.";
+  showScreen("error");
+});
+
+// ══════════════════════════════════════════
+//  SCREEN SWITCHER
+// ══════════════════════════════════════════
+function getScreen() {
+  const active = document.querySelector(".screen.active");
+  return active ? active.id.replace("screen-","") : null;
+}
+function showScreen(name) {
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  const el = document.getElementById("screen-"+name);
+  if (el) el.classList.add("active");
+}
+
+// ══════════════════════════════════════════
+//  LOGIN
+// ══════════════════════════════════════════
+let loginRole = "colleague";
+
+function setRole(role) {
+  loginRole = role;
+  document.querySelectorAll(".role-tab").forEach(t=>t.classList.remove("active"));
+  document.querySelector(`[data-role="${role}"]`).classList.add("active");
+  document.getElementById("role-colleague").style.display = role==="colleague"?"":"none";
+  document.getElementById("role-admin").style.display     = role==="admin"?"":"none";
+  document.getElementById("role-display").style.display   = role==="display"?"":"none";
+  document.getElementById("login-btn").textContent = role==="display"?"📺 Open Display Board":"Sign In";
+}
+
+function syncLoginDropdown() {
+  if (!DATA) return;
+  const sel = document.getElementById("login-colleague-select");
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Select your name…</option>' +
+    DATA.colleagues.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  if (cur) sel.value = cur;
+  // Also refresh history/name filter
+  const nf = document.getElementById("name-filter");
+  if (nf) {
+    const v = nf.value;
+    nf.innerHTML = '<option value="all">All Colleagues</option>' +
+      DATA.colleagues.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+    nf.value = v;
+  }
+}
+
+function doLogin() {
+  const errEl = document.getElementById("login-err");
+  errEl.style.display = "none";
+  if (!DATA) { errEl.textContent="Still connecting…"; errEl.style.display="block"; return; }
+
+  if (loginRole === "display") {
+    SESSION = { role:"display", name:"Display Board" };
+    showScreen("display");
+    startDisplayClock();
+    renderDisplay();
+    return;
+  }
+  if (loginRole === "admin") {
+    if (document.getElementById("login-pw").value === DATA.adminPw) {
+      SESSION = { role:"admin", name:"Dr. Adithya Iyer" };
+      launchApp();
+    } else { errEl.textContent="Incorrect password."; errEl.style.display="block"; }
+    return;
+  }
+  const selId = document.getElementById("login-colleague-select").value;
+  const pin   = document.getElementById("login-pin").value;
+  const c = DATA.colleagues.find(c=>String(c.id)===String(selId));
+  if (c && String(c.pin)===String(pin)) {
+    SESSION = { role:"colleague", name:c.name, colleagueId:c.id };
+    launchApp();
+  } else { errEl.textContent="Incorrect name or PIN."; errEl.style.display="block"; }
+}
+
+function launchApp() {
+  try {
+    const isAdmin = SESSION.role === "admin";
+    document.querySelectorAll(".admin-only").forEach(el => el.style.display = isAdmin ? "" : "none");
+
+    const userIni = SESSION.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase();
+    document.getElementById("hdr-avatar").textContent    = userIni;
+    document.getElementById("hdr-username").textContent  = SESSION.name;
+    const roleEl = document.getElementById("hdr-userrole");
+    roleEl.textContent = isAdmin ? "Admin" : "Colleague";
+    roleEl.style.color = isAdmin ? "var(--acc)" : "var(--ok)";
+
+    applyThemeFromData();
+    syncLoginDropdown();
+    showScreen("app");
+    showView("board");
+    startClock();
+    buildAdminUI();
+  } catch(e) {
+    console.error("launchApp error:", e);
+    alert("Error launching app: " + e.message + "\n\nCheck browser console for details.");
+  }
+}
+
+function doLogout() {
+  SESSION = null;
+  showScreen("login");
+  document.getElementById("login-pw").value = "";
+  document.getElementById("login-pin").value = "";
+  document.getElementById("login-err").style.display = "none";
+}
+
+// ══════════════════════════════════════════
+//  CLOCK
+// ══════════════════════════════════════════
+let clockInterval = null;
+function startClock() {
+  if (clockInterval) clearInterval(clockInterval);
+  clockInterval = setInterval(()=>{
+    const n = new Date();
+    const d = document.getElementById("clock-date");
+    const t = document.getElementById("clock-time");
+    if(d) d.textContent = n.toLocaleDateString("en-GB",{weekday:"short",day:"numeric",month:"short"});
+    if(t) t.textContent = n.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  },1000);
+}
+let dispClockInterval = null;
+function startDisplayClock() {
+  if (dispClockInterval) clearInterval(dispClockInterval);
+  dispClockInterval = setInterval(()=>{
+    const n = new Date();
+    const t = document.getElementById("disp-time");
+    const d = document.getElementById("disp-date");
+    if(t) t.textContent = n.toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+    if(d) d.textContent = n.toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  },1000);
+}
+
+// ══════════════════════════════════════════
+//  VIEW SWITCHER
+// ══════════════════════════════════════════
+function showView(v) {
+  VIEW = v;
+  ["board","history","admin"].forEach(x=>{
+    const el = document.getElementById("view-"+x);
+    if(el) el.style.display = x===v?"":"none";
+    const btn = document.getElementById("nav-"+x);
+    if(btn){
+      if(x===v){ btn.classList.add("active"); btn.style.background="var(--acc)"; btn.style.color="#fff"; }
+      else { btn.classList.remove("active"); btn.style.background="transparent"; btn.style.color="var(--txt2)"; }
+    }
+  });
+  if(v==="history") renderHistory();
+  if(v==="admin")   renderAdminColleagues();
+}
+
+// ══════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════
+const todayStr = ()=>new Date().toISOString().split("T")[0];
+const nowTime  = ()=>new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"});
+const daysBetween=(d1,d2)=>Math.round((new Date(d2)-new Date(d1))/86400000);
+const ini  = n=>n.split(" ").map(x=>x[0]).join("").slice(0,2).toUpperCase();
+const esc  = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+function save(next) { ROOT.set(next).catch(e=>console.error("Write error",e)); }
+
+function refreshUI() {
+  if (!DATA || !SESSION) return;
+  const screen = getScreen();
+  if (screen==="app"){
+    applyThemeFromData();
+    updateDatePill();
+    if(VIEW==="board")   renderBoard();
+    if(VIEW==="history") renderHistory();
+    if(VIEW==="admin"){ renderAdminColleagues(); }
+    updateStats();
+  }
+  if (screen==="display") renderDisplay();
+  syncLoginDropdown();
+}
+
+function updateDatePill() {
+  const p = document.getElementById("date-pill");
+  if(p) p.textContent = "📅 " + new Date().toLocaleDateString("en-GB",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+}
+
+// ══════════════════════════════════════════
+//  TASK ROWS
+// ══════════════════════════════════════════
+function getTaskRows(colleagues) {
+  const td = todayStr();
+  const rows = [];
+  colleagues.forEach(c => {
+    const todayT   = c.tasks.filter(t=>t.date===td);
+    const overdueT = c.tasks.filter(t=>t.date<td && t.status!=="complete" && t.status!=="dismissed");
+    const all = [
+      ...overdueT.map(t=>({...t,_overdue:true,_daysBehind:daysBetween(t.date,td)})),
+      ...todayT
+    ];
+    if(!all.length) rows.push({c,task:null});
+    else all.forEach(task=>rows.push({c,task}));
+  });
+  return rows;
+}
+
+// ══════════════════════════════════════════
+//  STATS
+// ══════════════════════════════════════════
+function updateStats() {
+  if(!DATA) return;
+  const td = todayStr();
+  const allT = DATA.colleagues.flatMap(c=>c.tasks);
+  const todayT = allT.filter(t=>t.date===td);
+  const done   = todayT.filter(t=>t.status==="complete").length;
+  const over   = allT.filter(t=>t.date<td && t.status!=="complete" && t.status!=="dismissed").length;
+  const highP  = todayT.filter(t=>t.priority==="high" && t.status!=="complete").length;
+  const items  = [
+    {icon:"📋",val:todayT.length, lbl:"Tasks Today",  col:"var(--acc)"},
+    {icon:"✅",val:done,          lbl:"Completed",     col:"var(--ok)"},
+    {icon:"⚠️",val:over,          lbl:"Overdue",       col:over>0?"var(--err)":"var(--txt2)"},
+    {icon:"🔴",val:highP,         lbl:"High Priority", col:highP>0?"var(--err)":"var(--txt2)"},
+  ];
+  document.getElementById("stats-bar").innerHTML = items.map(({icon,val,lbl,col})=>`
+    <div class="stat-card">
+      <div class="stat-icon" style="background:${col}18">${icon}</div>
+      <div><div class="stat-val" style="color:${col}">${val}</div><div class="stat-lbl">${lbl}</div></div>
+    </div>`).join("");
+}
+
+// ══════════════════════════════════════════
+//  BOARD RENDER
+// ══════════════════════════════════════════
+function renderBoard() {
+  if(!DATA || !SESSION) return;
+  const td = todayStr();
+  const isAdmin = SESSION.role==="admin";
+  const search = (document.getElementById("search-input")?.value||"").toLowerCase();
+  const nameFilter = document.getElementById("name-filter")?.value||"all";
+
+  // Update search clear button
+  const clr = document.getElementById("search-clear");
+  if(clr) clr.style.display = search?"":"none";
+
+  let colleagues = DATA.colleagues;
+  if(!isAdmin) colleagues = colleagues.filter(c=>String(c.id)===String(SESSION.colleagueId));
+  if(nameFilter!=="all") colleagues = colleagues.filter(c=>String(c.id)===String(nameFilter));
+  if(search) colleagues = colleagues.filter(c=>
+    c.name.toLowerCase().includes(search) ||
+    c.tasks.some(t=>t.text.toLowerCase().includes(search))
+  );
+
+  const rows = getTaskRows(colleagues);
+  const tbody = document.getElementById("board-tbody");
+  if(!tbody) return;
+
+  if(!rows.length){
+    tbody.innerHTML=`<tr><td colspan="7" style="text-align:center;padding:52px;color:var(--txt3);font-size:14px">${isAdmin?'No colleagues yet — click "+ Add Colleague"':"Your profile isn't set up yet."}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(({c,task},idx)=>{
+    const canEdit = isAdmin || String(SESSION.colleagueId)===String(c.id);
+    const showName = idx===0 || rows[idx-1].c.id!==c.id;
+    const overdue  = !!task?._overdue;
+    const status   = task?.status||"pending";
+    const rowBg    = status==="complete"?`rgba(16,124,16,.05)`:overdue?`rgba(196,43,28,.04)`:"";
+
+    // Colleague cell
+    const nameTd = showName
+      ? `<div style="display:flex;align-items:center;gap:9px">
+          <div class="avatar" style="background:var(--acc);width:30px;height:30px;font-size:11px">${ini(c.name)}</div>
+          <span style="font-size:13px;font-weight:600;white-space:nowrap">${esc(c.name)}</span>
+         </div>`
+      : `<div class="indent-bar"></div>`;
+
+    // Priority
+    const priTd = task ? (canEdit
+      ? `<div class="pri pri-toggle" onclick="togglePriority('${c.id}','${task.id}')" title="Toggle priority">
+           <div class="pri-dot" style="background:${task.priority==="high"?"var(--hi)":"#c0c0c0"}"></div>
+           <span style="color:${task.priority==="high"?"var(--hi)":"var(--txt2)"}">${task.priority==="high"?"High":"Norm"}</span>
+         </div>`
+      : `<div class="pri"><div class="pri-dot" style="background:${task.priority==="high"?"var(--hi)":"#c0c0c0"}"></div><span style="color:${task.priority==="high"?"var(--hi)":"var(--txt3)"}">${task.priority==="high"?"High":"Norm"}</span></div>`) : `<span style="color:var(--bdr)">—</span>`;
+
+    // Task text — click to edit
+    const taskTd = task
+      ? `<div>
+           <div class="task-text ${status==="complete"||status==="dismissed"?"done":""}"
+             ondblclick="${canEdit?`startEditTask('${c.id}','${task.id}',this)`:""}"
+             title="${canEdit?"Double-click to edit":""}"
+             style="cursor:${canEdit?"text":"default"}"
+           >${esc(task.text)}${canEdit?'<span style="font-size:9px;color:var(--txt3);margin-left:5px;opacity:.5">✏</span>':''}</div>
+           ${overdue&&status!=="complete"&&status!=="dismissed"?`<div class="overdue-tag">⚠ OVERDUE · ${task._daysBehind}d ago</div>`:""}
+         </div>`
+      : canEdit
+        ? `<input class="add-task-input" placeholder="Type task + Enter…" data-cid="${c.id}"
+             onkeydown="if(event.key==='Enter')addTaskFromInput(this)">`
+        : `<span style="color:var(--txt3);font-size:12px;font-style:italic">No tasks yet</span>`;
+
+    // Status pill with dropdown
+    const statusTd = task ? statusPillHTML(c.id, task.id, status, overdue, canEdit) : `<span style="color:var(--bdr)">—</span>`;
+
+    // Times
+    const addedTd = `<span class="mono">${task?.addedAt||"—"}</span>`;
+    const doneTd  = task?.status==="complete"&&task?.completedAt
+      ? `<span class="mono done">✓ ${task.completedAt}</span>`
+      : task?.status==="dismissed" ? `<span class="mono" style="color:var(--dis)">dismissed</span>`
+      : `<span class="mono">—</span>`;
+
+    // Delete button
+    const actTd = task&&canEdit
+      ? `<button onclick="deleteTask('${c.id}','${task.id}')" title="Delete" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--bdr);background:var(--errbg);color:var(--err);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center">🗑</button>`
+      : `<span style="color:var(--bdr)">—</span>`;
+
+    return `<tr style="border-bottom:1px solid var(--bdr);background:${rowBg}" id="row-${task?.id||'empty-'+c.id}">
+      <td class="col-name">${nameTd}</td>
+      <td style="text-align:center">${priTd}</td>
+      <td>${taskTd}</td>
+      <td style="text-align:center">${statusTd}</td>
+      <td class="desktop-only" style="text-align:center">${addedTd}</td>
+      <td class="desktop-only" style="text-align:center">${doneTd}</td>
+      <td style="text-align:center">${actTd}</td>
+    </tr>`;
+  }).join("");
+
+  // Add footer rows for own colleagues
+  colleagues.forEach(c=>{
+    const canEdit = isAdmin||String(SESSION.colleagueId)===String(c.id);
+    if(!canEdit) return;
+    tbody.innerHTML += `<tr class="add-row" style="border-bottom:1px solid var(--bdr)">
+      <td class="col-name" style="font-size:11px;color:var(--txt3);font-style:italic">+ ${esc(c.name)}</td>
+      <td style="text-align:center">
+        <div class="pri-toggle" id="add-pri-${c.id}" onclick="toggleAddPri('${c.id}')" title="Toggle priority" style="width:20px;height:20px;border-radius:50%;border:1.5px solid var(--bdr);cursor:pointer;display:flex;align-items:center;justify-content:center;margin:auto">
+          <div style="width:8px;height:8px;border-radius:50%;background:#c0c0c0" id="add-pri-dot-${c.id}"></div>
+        </div>
+      </td>
+      <td colspan="5"><input class="add-task-input" placeholder="Add task for ${esc(c.name)}…" data-cid="${c.id}"
+        onkeydown="if(event.key==='Enter')addTaskFromInput(this)"></td>
+    </tr>`;
+  });
+}
+
+function statusPillHTML(cid, tid, status, overdue, canEdit) {
+  const cfg = {
+    complete:  {bg:"var(--okbg)", bdr:"#a8d5a2", col:"var(--ok)", dot:"var(--ok)", lbl:"✓ Complete"},
+    dismissed: {bg:"var(--disbg)",bdr:"#ccc",    col:"var(--dis)",dot:"var(--dis)",lbl:"⊘ Dismissed"},
+    overdue_s: {bg:"var(--errbg)",bdr:"#f1998f", col:"var(--err)",dot:"var(--err)",lbl:"⚠ Overdue"},
+    pending:   {bg:"var(--sur2)", bdr:"var(--bdr)",col:"var(--txt2)",dot:"#c0c0c0",lbl:"○ Pending"},
+  };
+  const key = status==="complete"?"complete":status==="dismissed"?"dismissed":overdue?"overdue_s":"pending";
+  const s = cfg[key];
+  if(!canEdit) return `<div class="status-pill" style="background:${s.bg};border-color:${s.bdr};color:${s.col}"><div class="status-dot" style="background:${s.dot}"></div>${s.lbl}</div>`;
+  const id = `sd-${cid}-${tid}`;
+  return `<div class="status-pill clickable" style="background:${s.bg};border-color:${s.bdr};color:${s.col}" onclick="toggleStatusDropdown('${id}')">
+    <div class="status-dot" style="background:${s.dot}"></div>${s.lbl}<span style="font-size:8px;margin-left:2px">▾</span>
+    <div class="status-dropdown" id="${id}">
+      <div class="status-option" onclick="event.stopPropagation();setStatus('${cid}','${tid}','complete');closeAllDropdowns()">✓ Complete</div>
+      <div class="status-option" onclick="event.stopPropagation();setStatus('${cid}','${tid}','pending');closeAllDropdowns()">○ Pending</div>
+      <div class="status-option" style="color:var(--err)" onclick="event.stopPropagation();setStatus('${cid}','${tid}','dismissed');closeAllDropdowns()">⊘ Dismiss</div>
+    </div>
+  </div>`;
+}
+
+document.addEventListener("click", e=>{
+  if(!e.target.closest(".status-pill")) closeAllDropdowns();
+});
+function closeAllDropdowns(){document.querySelectorAll(".status-dropdown.open").forEach(d=>d.classList.remove("open"));}
+function toggleStatusDropdown(id){
+  const el=document.getElementById(id);
+  if(!el) return;
+  const wasOpen=el.classList.contains("open");
+  closeAllDropdowns();
+  if(!wasOpen) el.classList.add("open");
+}
+
+// ══════════════════════════════════════════
+//  TASK MUTATIONS
+// ══════════════════════════════════════════
+const addPriorities = {}; // track priority for add-row per colleague
+
+function toggleAddPri(cid) {
+  addPriorities[cid] = addPriorities[cid]==="high"?"normal":"high";
+  const dot = document.getElementById(`add-pri-dot-${cid}`);
+  const btn = document.getElementById(`add-pri-${cid}`);
+  if(dot){ dot.style.background = addPriorities[cid]==="high"?"var(--hi)":"#c0c0c0"; }
+  if(btn){ btn.style.borderColor = addPriorities[cid]==="high"?"var(--hi)":"var(--bdr)"; }
+}
+
+function addTaskFromInput(el) {
+  const text = el.value.trim();
+  const cid  = el.dataset.cid;
+  if(!text||!cid||!DATA) return;
+  const priority = addPriorities[cid]||"normal";
+  const next = JSON.parse(JSON.stringify(DATA));
+  const c = next.colleagues.find(x=>String(x.id)===String(cid));
+  if(!c) return;
+  c.tasks.push({id:Date.now(),text,done:false,priority,status:"pending",date:todayStr(),addedAt:nowTime(),completedAt:null});
+  save(next);
+  el.value="";
+  addPriorities[cid]="normal";
+}
+
+function setStatus(cid, tid, newStatus) {
+  if(!DATA) return;
+  const next = JSON.parse(JSON.stringify(DATA));
+  const c = next.colleagues.find(x=>String(x.id)===String(cid));
+  if(!c) return;
+  const t = c.tasks.find(x=>String(x.id)===String(tid));
+  if(!t) return;
+  const wasComplete = t.status==="complete";
+  t.status = newStatus;
+  t.done = newStatus==="complete";
+  t.completedAt = newStatus==="complete" ? nowTime() : null;
+  // Update history
+  if(newStatus==="complete" && !wasComplete){
+    next.history = [...(next.history||[]), {date:todayStr(),colleagueName:c.name,taskText:t.text,priority:t.priority||"normal",completedAt:nowTime(),originalDate:t.date,status:"complete"}];
+  } else if(wasComplete && newStatus!=="complete"){
+    // remove from history
+    next.history = (next.history||[]).filter(h=>!(h.colleagueName===c.name&&h.taskText===t.text&&h.date===todayStr()));
+  }
+  save(next);
+}
+
+function togglePriority(cid, tid) {
+  if(!DATA) return;
+  const next = JSON.parse(JSON.stringify(DATA));
+  const c = next.colleagues.find(x=>String(x.id)===String(cid));
+  if(!c) return;
+  const t = c.tasks.find(x=>String(x.id)===String(tid));
+  if(!t) return;
+  t.priority = t.priority==="high"?"normal":"high";
+  save(next);
+}
+
+function deleteTask(cid, tid) {
+  showConfirm("Delete this task?", ()=>{
+    if(!DATA) return;
+    const next = JSON.parse(JSON.stringify(DATA));
+    const c = next.colleagues.find(x=>String(x.id)===String(cid));
+    if(c) c.tasks = c.tasks.filter(x=>String(x.id)!==String(tid));
+    save(next);
+  });
+}
+
+function startEditTask(cid, tid, el) {
+  const cur = el.querySelector(".task-text") || el;
+  const txt = DATA?.colleagues.find(c=>String(c.id)===String(cid))?.tasks.find(t=>String(t.id)===String(tid))?.text || "";
+  const inp = document.createElement("input");
+  inp.value = txt;
+  inp.style.cssText = "width:100%;padding:5px 8px;border-radius:6px;border:1.5px solid var(--acc);font-size:13px;font-family:var(--ff);outline:none;background:var(--tdy)";
+  el.replaceWith(inp);
+  inp.focus();
+  const commit = ()=>{
+    const newText = inp.value.trim();
+    if(newText && newText!==txt && DATA){
+      const next = JSON.parse(JSON.stringify(DATA));
+      const c = next.colleagues.find(x=>String(x.id)===String(cid));
+      if(c){ const t=c.tasks.find(x=>String(x.id)===String(tid)); if(t) t.text=newText; }
+      save(next);
+    }
+  };
+  inp.addEventListener("keydown",e=>{ if(e.key==="Enter"){commit();} if(e.key==="Escape"){commit();} });
+  inp.addEventListener("blur",commit);
+}
+
+// ══════════════════════════════════════════
+//  NEW DAY
+// ══════════════════════════════════════════
+function confirmNewDay() {
+  showConfirm("Start a new day? Completed & dismissed tasks will be archived. Pending tasks carry forward as overdue.", doNewDay);
+}
+function doNewDay() {
+  if(!DATA) return;
+  const td = todayStr();
+  const next = JSON.parse(JSON.stringify(DATA));
+  next.colleagues.forEach(c=>{
+    const toArchive = c.tasks.filter(t=>t.status==="complete"||t.status==="dismissed");
+    toArchive.forEach(t=>{
+      if(!next.history.some(h=>h.colleagueName===c.name&&h.taskText===t.text&&h.date===t.date)){
+        next.history.push({date:t.date,colleagueName:c.name,taskText:t.text,priority:t.priority||"normal",completedAt:t.completedAt||null,status:t.status,originalDate:t.date});
+      }
+    });
+    c.tasks = c.tasks.filter(t=>t.status!=="complete"&&t.status!=="dismissed");
+  });
+  save(next);
+  showToast("Board reset. Incomplete tasks carry forward as overdue.","ok");
+}
+
+// ══════════════════════════════════════════
+//  HISTORY
+// ══════════════════════════════════════════
+function renderHistory() {
+  if(!DATA) return;
+  const td = todayStr();
+  const sF = document.getElementById("hist-colleague")?.value||"all";
+  const dF = document.getElementById("hist-date")?.value||"all";
+  const stF = document.getElementById("hist-status")?.value||"all";
+
+  // Sync colleague filter
+  const hc = document.getElementById("hist-colleague");
+  if(hc){ const v=hc.value; hc.innerHTML='<option value="all">All Colleagues</option>'+DATA.colleagues.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join(""); hc.value=v||"all"; }
+
+  let rows = [];
+  DATA.history.forEach(h=>rows.push({...h,status:h.status||"complete"}));
+  DATA.colleagues.forEach(c=>{
+    c.tasks.filter(t=>t.status!=="complete"&&t.status!=="dismissed").forEach(t=>{
+      rows.push({date:t.date,colleagueName:c.name,taskText:t.text,priority:t.priority||"normal",completedAt:null,status:t.date<td?"overdue":"pending"});
+    });
+    c.tasks.filter(t=>t.status==="dismissed").forEach(t=>{
+      rows.push({date:t.date,colleagueName:c.name,taskText:t.text,priority:t.priority||"normal",completedAt:null,status:"dismissed"});
+    });
+  });
+
+  if(SESSION.role==="colleague") rows=rows.filter(r=>r.colleagueName===SESSION.name);
+  if(sF!=="all") rows=rows.filter(r=>r.colleagueName===sF);
+  if(dF!=="all") rows=rows.filter(r=>r.date===dF);
+  if(stF!=="all") rows=rows.filter(r=>r.status===stF);
+  rows.sort((a,b)=>b.date.localeCompare(a.date));
+
+  // Sync date filter
+  const hd = document.getElementById("hist-date");
+  if(hd){ const v=hd.value; const dates=[...new Set(rows.map(r=>r.date))].sort().reverse(); hd.innerHTML='<option value="all">All Dates</option>'+dates.map(d=>`<option value="${d}">${d}</option>`).join(""); hd.value=v||"all"; }
+
+  const statusBadge = s=>{
+    const m={complete:["var(--okbg)","var(--ok)"],overdue:["var(--errbg)","var(--err)"],pending:["#e8f0fe","var(--acc)"],dismissed:["var(--disbg)","var(--dis)"]};
+    const [bg,col]=m[s]||m.pending;
+    return `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;background:${bg};color:${col}">${s}</span>`;
+  };
+
+  const tbody = document.getElementById("hist-tbody");
+  tbody.innerHTML = rows.length
+    ? rows.map(r=>`<tr style="border-bottom:1px solid var(--bdr)">
+        <td class="mono">${r.date}</td>
+        <td style="font-weight:600">${esc(r.colleagueName)}</td>
+        <td>${esc(r.taskText)}</td>
+        <td style="text-align:center"><div class="pri"><div class="pri-dot" style="background:${r.priority==="high"?"var(--hi)":"#c0c0c0"}"></div><span style="font-size:11px;color:${r.priority==="high"?"var(--hi)":"var(--txt2)"}">${r.priority==="high"?"High":"Normal"}</span></div></td>
+        <td style="text-align:center">${statusBadge(r.status)}</td>
+        <td class="desktop-only mono done">${r.completedAt||"—"}</td>
+      </tr>`).join("")
+    : `<tr><td colspan="6" style="text-align:center;padding:44px;color:var(--txt3);font-size:13px">No records found</td></tr>`;
+}
+
+// ══════════════════════════════════════════
+//  ADMIN
+// ══════════════════════════════════════════
+function renderAdminColleagues() {
+  if(!DATA) return;
+  const td = todayStr();
+  const el = document.getElementById("admin-colleague-list");
+  if(!el) return;
+  if(!DATA.colleagues.length){ el.innerHTML='<div style="text-align:center;color:var(--txt3);padding:24px;font-size:13px">No colleagues yet.</div>'; return; }
+  el.innerHTML = DATA.colleagues.map(c=>{
+    const done=c.tasks.filter(t=>t.date===td&&t.status==="complete").length;
+    const total=c.tasks.filter(t=>t.date===td).length;
+    return `<div class="colleague-item">
+      <div class="avatar" style="background:var(--acc);width:32px;height:32px;font-size:12px">${ini(c.name)}</div>
+      <div style="flex:1">
+        <div class="colleague-name">${esc(c.name)}</div>
+        <div class="colleague-meta">PIN: ${c.pin} · ${done}/${total} today</div>
+      </div>
+      <button class="btn btn-danger" style="font-size:11px;padding:4px 10px" onclick="removeColleague('${c.id}')">Remove</button>
+    </div>`;
+  }).join("");
+}
+
+function saveColleague() {
+  const name = document.getElementById("nc-name").value.trim();
+  const pin  = document.getElementById("nc-pin").value.trim();
+  if(!name){ showToast("Name is required","err"); return; }
+  if(!pin||pin.length<4){ showToast("PIN must be 4 digits","err"); return; }
+  if(!DATA) return;
+  const next = JSON.parse(JSON.stringify(DATA));
+  next.colleagues.push({id:Date.now(),name,pin,tasks:[]});
+  save(next);
+  document.getElementById("nc-name").value="";
+  document.getElementById("nc-pin").value="";
+  closeModal("add-colleague");
+  showToast(name+" added","ok");
+}
+
+function removeColleague(id) {
+  showConfirm("Remove this colleague? Their history will be kept.", ()=>{
+    if(!DATA) return;
+    const next = JSON.parse(JSON.stringify(DATA));
+    next.colleagues = next.colleagues.filter(c=>String(c.id)!==String(id));
+    save(next);
+    showToast("Colleague removed","inf");
+  });
+}
+
+function changePassword() {
+  const cur=document.getElementById("pw-cur").value;
+  const nw=document.getElementById("pw-new").value;
+  const cf=document.getElementById("pw-conf").value;
+  if(!DATA){ showToast("Not connected","err"); return; }
+  if(cur!==DATA.adminPw){ showToast("Current password wrong","err"); return; }
+  if(nw.length<4){ showToast("Min 4 characters","err"); return; }
+  if(nw!==cf){ showToast("Passwords don't match","err"); return; }
+  const next=JSON.parse(JSON.stringify(DATA)); next.adminPw=nw; save(next);
+  document.getElementById("pw-cur").value="";
+  document.getElementById("pw-new").value="";
+  document.getElementById("pw-conf").value="";
+  showToast("Password updated","ok");
+}
+
+function saveBranding() {
+  if(!DATA) return;
+  const next=JSON.parse(JSON.stringify(DATA));
+  next.orgName    = document.getElementById("brand-org").value.trim()||"Dubai Golf";
+  next.boardTitle = document.getElementById("brand-board").value.trim()||"Team Task Board";
+  next.icon       = document.getElementById("brand-icon").value.trim()||"⛳";
+  save(next);
+  applyThemeFromData();
+  showToast("Branding saved","ok");
+}
+
+// ══════════════════════════════════════════
+//  DISPLAY BOARD
+// ══════════════════════════════════════════
+function renderDisplay() {
+  if(!DATA) return;
+  const td = todayStr();
+  const colleagues = DATA.colleagues;
+
+  // Update header branding
+  const dicon = document.getElementById("disp-icon"); if(dicon) dicon.textContent=DATA.icon||"⛳";
+  const dorg  = document.getElementById("disp-org");  if(dorg)  dorg.textContent=DATA.orgName||"Dubai Golf";
+
+  // Stats pills
+  const allT = colleagues.flatMap(c=>c.tasks);
+  const todayT = allT.filter(t=>t.date===td);
+  const doneC  = todayT.filter(t=>t.status==="complete").length;
+  const overC  = allT.filter(t=>t.date<td&&t.status!=="complete"&&t.status!=="dismissed").length;
+  const highC  = todayT.filter(t=>t.priority==="high"&&t.status!=="complete").length;
+  const rate   = todayT.length?Math.round(doneC/todayT.length*100):0;
+  const dispStats = document.getElementById("disp-stats");
+  if(dispStats) dispStats.innerHTML = [
+    {lbl:"Tasks",   val:todayT.length,   col:"var(--acc)"},
+    {lbl:"Complete",val:doneC,           col:"var(--ok)"},
+    {lbl:"Overdue", val:overC,           col:overC>0?"var(--err)":"var(--txt3)"},
+    {lbl:"High Pri", val:highC,          col:highC>0?"var(--err)":"var(--txt3)"},
+    {lbl:"Rate",    val:rate+"%",        col:rate>=80?"var(--ok)":rate>=50?"var(--warn)":"var(--err)"},
+  ].map(({lbl,val,col})=>`<div class="disp-stat"><div class="disp-stat-val" style="color:${col}">${val}</div><div class="disp-stat-lbl">${lbl}</div></div>`).join("");
+
+  const rows = getTaskRows(colleagues);
+  const tbody = document.getElementById("disp-tbody");
+  if(!tbody) return;
+
+  tbody.innerHTML = rows.map(({c,task},idx)=>{
+    const showName = idx===0||rows[idx-1].c.id!==c.id;
+    const overdue  = !!task?._overdue;
+    const status   = task?.status||"pending";
+    const rowBg    = status==="complete"?`rgba(16,124,16,.05)`:overdue?`rgba(196,43,28,.04)`:"";
+
+    const cDone=c.tasks.filter(t=>t.date===td&&t.status==="complete").length;
+    const cTotal=c.tasks.filter(t=>t.date===td).length;
+    const badgeBg=cDone===cTotal&&cTotal>0?"var(--ok)":cTotal===0?"#ccc":"var(--err)";
+
+    const nameTd = showName
+      ? `<div style="display:flex;align-items:center;gap:10px">
+           <div style="position:relative">
+             <div class="avatar" style="background:var(--acc);width:36px;height:36px;font-size:13px">${ini(c.name)}</div>
+             <div style="position:absolute;top:-5px;right:-5px;min-width:20px;height:20px;border-radius:10px;background:${badgeBg};color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px;border:2px solid #fff">${cDone}/${cTotal}</div>
+           </div>
+           <span style="font-size:14px;font-weight:600">${esc(c.name)}</span>
+         </div>`
+      : `<div class="indent-bar"></div>`;
+
+    const priDot = task ? `<div class="pri" style="justify-content:center"><div class="pri-dot" style="background:${task.priority==="high"?"var(--hi)":"#c0c0c0"}"></div><span style="font-size:11px;color:${task.priority==="high"?"var(--hi)":"var(--txt3)"}">${task.priority==="high"?"High":""}</span></div>` : `<span style="color:var(--bdr)">—</span>`;
+
+    const taskTd = task
+      ? `<div><div style="font-size:14px;color:${status==="complete"||status==="dismissed"?"var(--txt3)":"var(--txt)"};text-decoration:${status==="complete"||status==="dismissed"?"line-through":"none"};line-height:1.45">${esc(task.text)}</div>${overdue&&status!=="complete"&&status!=="dismissed"?`<div style="font-size:11px;color:var(--err);font-weight:600;margin-top:2px">⚠ ${task._daysBehind}d overdue</div>`:""}</div>`
+      : `<span style="font-size:13px;color:var(--txt3);font-style:italic">No tasks yet</span>`;
+
+    const cfg={complete:{bg:"var(--okbg)",bdr:"#a8d5a2",col:"var(--ok)",dot:"var(--ok)",lbl:"✓ Complete"},dismissed:{bg:"var(--disbg)",bdr:"#ccc",col:"var(--dis)",dot:"var(--dis)",lbl:"⊘ Dismissed"},overdue_s:{bg:"var(--errbg)",bdr:"#f1998f",col:"var(--err)",dot:"var(--err)",lbl:"⚠ Overdue"},pending:{bg:"var(--sur2)",bdr:"var(--bdr)",col:"var(--txt2)",dot:"#c0c0c0",lbl:"○ Pending"}};
+    const key=status==="complete"?"complete":status==="dismissed"?"dismissed":overdue?"overdue_s":"pending";
+    const s=cfg[key];
+    const statusTd=task?`<div class="status-pill" style="background:${s.bg};border-color:${s.bdr};color:${s.col}"><div class="status-dot" style="background:${s.dot}"></div>${s.lbl}</div>`:`<span style="color:var(--bdr)">—</span>`;
+
+    return `<tr style="border-bottom:1px solid var(--bdr);background:${rowBg}">
+      <td class="col-name">${nameTd}</td>
+      <td style="text-align:center">${priDot}</td>
+      <td>${taskTd}</td>
+      <td style="text-align:center">${statusTd}</td>
+      <td class="desktop-only mono" style="text-align:center">${task?.addedAt||"—"}</td>
+      <td class="desktop-only" style="text-align:center">${task?.status==="complete"&&task?.completedAt?`<span class="mono done">✓ ${task.completedAt}</span>`:`<span class="mono">—</span>`}</td>
+    </tr>`;
+  }).join("");
+
+  const foot=document.getElementById("disp-footer");
+  if(foot) foot.textContent=`${colleagues.length} colleagues · ${todayT.length} tasks today · last refreshed ${new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`;
+
+  // Auto-refresh
+  setTimeout(()=>{ if(document.getElementById("screen-display").classList.contains("active")) renderDisplay(); }, 30000);
+}
+
+// ══════════════════════════════════════════
+//  THEME
+// ══════════════════════════════════════════
+function applyThemeFromData() {
+  if(!DATA) return;
+  const r = document.documentElement;
+  if(DATA.themeAcc) r.style.setProperty("--acc", DATA.themeAcc);
+  if(DATA.themeBg)  r.style.setProperty("--bg",  DATA.themeBg);
+  if(DATA.themeSur) r.style.setProperty("--sur",  DATA.themeSur);
+  if(DATA.themeTdy) r.style.setProperty("--tdy",  DATA.themeTdy);
+  const org=DATA.orgName||"Dubai Golf", board=DATA.boardTitle||"Team Task Board", icon=DATA.icon||"⛳";
+  const ids=["hdr-org","login-org","disp-org"]; ids.forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=org;});
+  const bids=["hdr-board","login-board"]; bids.forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=board;});
+  const iids=["hdr-icon","login-icon","disp-icon"]; iids.forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=icon;});
+  document.title=board+" — "+org;
+  // sync brand fields in admin
+  const bo=document.getElementById("brand-org"); if(bo&&bo!==document.activeElement) bo.value=org;
+  const bb=document.getElementById("brand-board"); if(bb&&bb!==document.activeElement) bb.value=board;
+  const bi=document.getElementById("brand-icon"); if(bi&&bi!==document.activeElement) bi.value=icon;
+}
+
+function buildAdminUI() {
+  // Preset grid
+  const pg = document.getElementById("preset-grid");
+  if(pg) pg.innerHTML = THEMES.map((t,i)=>`
+    <div class="preset-btn" style="background:${t.bg}" onclick="loadPreset(${i})">
+      <div class="preset-dot" style="background:${t.acc}"></div>
+      <div class="preset-name" style="color:${t.bg==="#0f172a"||t.bg==="#1a1a1a"?"#e2e8f0":"#1a1a1a"}">${t.name}</div>
+    </div>`).join("");
+
+  // Color pickers
+  const cp = document.getElementById("color-pickers");
+  if(cp) cp.innerHTML = [
+    ["Accent",        "acc", DATA?.themeAcc||"#0067c0"],
+    ["Background",    "bg",  DATA?.themeBg||"#f3f3f3"],
+    ["Surface",       "sur", DATA?.themeSur||"#ffffff"],
+    ["Today Highlight","tdy",DATA?.themeTdy||"#e8f4fe"],
+  ].map(([lbl,key,val])=>`
+    <div class="color-row">
+      <input type="color" id="cp-${key}" value="${val}" oninput="syncColor('${key}')">
+      <div class="color-info">
+        <div class="color-lbl">${lbl}</div>
+        <div class="color-val" id="cv-${key}">${val}</div>
+      </div>
+    </div>`).join("");
+}
+
+function syncColor(key) {
+  const v=document.getElementById(`cp-${key}`)?.value;
+  const cv=document.getElementById(`cv-${key}`);
+  if(cv) cv.textContent=v;
+}
+
+function loadPreset(i) {
+  const t=THEMES[i];
+  [["acc",t.acc],["bg",t.bg],["sur",t.sur],["tdy",t.tdy]].forEach(([k,v])=>{
+    const inp=document.getElementById(`cp-${k}`);
+    const cv=document.getElementById(`cv-${k}`);
+    if(inp) inp.value=v;
+    if(cv) cv.textContent=v;
+  });
+  showToast(`Theme "${t.name}" loaded — click Apply`,"inf");
+}
+
+function applyTheme() {
+  if(!DATA) return;
+  const next=JSON.parse(JSON.stringify(DATA));
+  ["acc","bg","sur","tdy"].forEach(k=>{
+    const v=document.getElementById(`cp-${k}`)?.value;
+    if(v){ next[`theme${k.charAt(0).toUpperCase()+k.slice(1)}`]=v; }
+  });
+  save(next);
+  showToast("Theme saved","ok");
+}
+
+function resetTheme() {
+  const defs={acc:"#0067c0",bg:"#f3f3f3",sur:"#ffffff",tdy:"#e8f4fe"};
+  Object.entries(defs).forEach(([k,v])=>{
+    const inp=document.getElementById(`cp-${k}`);
+    const cv=document.getElementById(`cv-${k}`);
+    if(inp) inp.value=v;
+    if(cv) cv.textContent=v;
+  });
+  if(DATA){
+    const next=JSON.parse(JSON.stringify(DATA));
+    delete next.themeAcc; delete next.themeBg; delete next.themeSur; delete next.themeTdy;
+    save(next);
+  }
+  const r=document.documentElement;
+  r.style.setProperty("--acc","#0067c0"); r.style.setProperty("--bg","#f3f3f3");
+  r.style.setProperty("--sur","#ffffff"); r.style.setProperty("--tdy","#e8f4fe");
+  showToast("Theme reset","ok");
+}
+
+// ══════════════════════════════════════════
+//  EXPORT CSV
+// ══════════════════════════════════════════
+function exportCSV() {
+  if(!DATA) return;
+  const td=todayStr();
+  const rows=[["Date","Colleague","Task","Priority","Status","Completed At"]];
+  DATA.history.forEach(h=>rows.push([h.date,h.colleagueName,h.taskText,h.priority||"normal","complete",h.completedAt||""]));
+  DATA.colleagues.forEach(c=>c.tasks.filter(t=>t.status!=="complete").forEach(t=>{
+    rows.push([t.date,c.name,t.text,t.priority||"normal",t.date<td?"overdue":t.status||"pending",""]);
+  }));
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const a=document.createElement("a"); a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+  a.download=`taskboard-${td}.csv`; a.click();
+  showToast("CSV exported","ok");
+}
+
+// ══════════════════════════════════════════
+//  MODALS & TOAST & CONFIRM
+// ══════════════════════════════════════════
+function openModal(id){document.getElementById("modal-"+id)?.classList.add("open");}
+function closeModal(id){document.getElementById("modal-"+id)?.classList.remove("open");}
+document.querySelectorAll(".modal-overlay").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("open");}));
+
+function showConfirm(msg, fn){ document.getElementById("confirm-text").textContent=msg; CONFIRM_FN=fn; openModal("confirm"); }
+function runConfirm(){ if(CONFIRM_FN){CONFIRM_FN(); CONFIRM_FN=null;} closeModal("confirm"); }
+
+let toastTimer;
+function showToast(msg, type="inf"){
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.className=type; el.style.display="block";
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{el.style.display="none";},3000);
+}
+
+function clearSearch(){ document.getElementById("search-input").value=""; renderBoard(); }
+
+</script>
+</body>
+</html>
