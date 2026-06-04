@@ -137,7 +137,7 @@
   .mbtns{display:flex;gap:9px;justify-content:flex-end}
  
   /* ── DISPLAY ── */
-  #s-disp{display:none;background:#f3f3f3}
+  #s-disp{display:none;flex-direction:column;background:#f3f3f3}
   .dhdr{background:rgba(255,255,255,.9);backdrop-filter:blur(16px);border-bottom:1px solid #e0e0e0;padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
   .dstats{display:flex;gap:10px;align-items:center}
   .dstat{display:flex;flex-direction:column;align-items:center;padding:5px 13px;background:#f9f9f9;border:1px solid #e0e0e0;border-radius:8px;min-width:66px}
@@ -532,12 +532,13 @@ const DEFAULT  = {
 function lsSave(d){ try{localStorage.setItem(LS_KEY,JSON.stringify(d));}catch(e){} }
 function lsLoad(){ try{const v=localStorage.getItem(LS_KEY);return v?JSON.parse(v):null;}catch(e){return null;} }
  
-// Write: localStorage first (instant), then Supabase in background
+// Write: stamp timestamp, save locally, push to Supabase
 function wr(data){
-  D = norm(data);        // update in-memory state immediately
-  lsSave(D);             // save to localStorage
-  supaWrite(D);          // push to Supabase in background
-  redraw();              // update UI immediately
+  data.updatedAt = Date.now();  // timestamp every write
+  D = norm(data);
+  lsSave(D);
+  supaWrite(D);
+  redraw();
 }
  
 // Write to Supabase
@@ -551,33 +552,30 @@ function supaWrite(data){
   .catch(e=>console.warn("Supabase write error:", e));
 }
  
-// Pull latest from Supabase — merge tasks from all devices
+// Pull latest from Supabase — use updatedAt timestamp to determine winner
 function supaSync(){
   fetch(SUPA_URL, {headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY}})
-    .then(r=>r.ok?r.json():null)
-    .then(rows=>{
+    .then(function(r){return r.ok?r.json():null;})
+    .then(function(rows){
       if(!rows||!rows.length||!rows[0].data){
-        supaWrite(D); // Supabase empty — push local up
-        return;
+        supaWrite(D); return; // Supabase empty — push local up
       }
       const remote = norm(rows[0].data);
-      // Compare full data including tasks — use whichever is newer/has more tasks
-      const localTaskCount  = (D&&D.colleagues||[]).reduce(function(s,c){return s+(c.tasks||[]).length;},0);
-      const remoteTaskCount = (remote.colleagues||[]).reduce(function(s,c){return s+(c.tasks||[]).length;},0);
-      const localStr  = JSON.stringify(D);
-      const remoteStr = JSON.stringify(remote);
-      if(remoteStr === localStr) return; // identical — nothing to do
-      if(remoteTaskCount > localTaskCount){
-        // Remote has more tasks — pull it down
+      // Use updatedAt timestamp — whichever was written most recently wins
+      const localTime  = D.updatedAt  || 0;
+      const remoteTime = remote.updatedAt || 0;
+      if(remoteTime > localTime){
+        // Supabase is newer — pull it down
         D = remote;
         lsSave(D);
         redraw();
-      } else {
-        // Local has more tasks — push it up
+      } else if(localTime > remoteTime){
+        // Local is newer — push it up
         supaWrite(D);
       }
+      // Equal timestamps = same data, nothing to do
     })
-    .catch(()=>{});
+    .catch(function(){});
 }
  
 // Session persistence — save/load from localStorage
@@ -672,8 +670,7 @@ function show(id){
     el.style.cssText = "display:flex;flex-direction:column;min-height:100vh;background:#f3f3f3";
   } else if(id === "s-disp"){
     el.style.cssText = "display:flex;flex-direction:column;min-height:100vh;background:#f3f3f3";
-  }
-  CURRENT_SCREEN = id;
+  }  CURRENT_SCREEN = id;
 }
  
 // ════════════════════════════════════════
