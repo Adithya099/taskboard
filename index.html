@@ -1152,7 +1152,13 @@ function syncClr(k){const v=document.getElementById(k)?.value;const vl=document.
 // ════════════════════════════════════════
 function renderDisp(){
   if(!D)return;
-  const t=td(),cols=D.colleagues;
+  const t=td();
+  // Only show colleagues who have added at least one task today or have overdue tasks
+  const cols=D.colleagues.filter(function(c){
+    return c.tasks.some(function(k){
+      return k.date===t || (k.date<t && k.status!=="complete" && k.status!=="dismissed");
+    });
+  });
   const ico=document.getElementById("d-ico"); if(ico)ico.textContent=D.icon||"⛳";
   const org=document.getElementById("d-org"); if(org)org.textContent=D.orgName||"Dubai Golf";
   const allT=cols.flatMap(c=>c.tasks),dayT=allT.filter(k=>k.date===t);
@@ -1163,6 +1169,12 @@ function renderDisp(){
  
   const rows=taskRows(cols);
   const tb=document.getElementById("dtbody"); if(!tb)return;
+  if(!rows.length){
+    tb.innerHTML=`<tr><td colspan="6" style="text-align:center;padding:60px;color:#aaa;font-size:16px">
+      No tasks added yet today.<br><span style="font-size:13px;margin-top:8px;display:block">Colleagues can add tasks by logging in at this URL.</span>
+    </td></tr>`;
+    return;
+  }
   const m={complete:{bg:"#dff0d8",bd:"#a8d5a2",cl:"#107c10",dt:"#107c10",lb:"✓ Complete"},dismissed:{bg:"#f0f0f0",bd:"#ccc",cl:"#6b6b6b",dt:"#6b6b6b",lb:"⊘ Dismissed"},overdue:{bg:"#fde7e9",bd:"#f1998f",cl:"#c42b1c",dt:"#c42b1c",lb:"⚠ Overdue"},pending:{bg:"#f9f9f9",bd:"#e0e0e0",cl:"#5d5d5d",dt:"#c0c0c0",lb:"○ Pending"}};
   tb.innerHTML=rows.map(({c,task},i)=>{
     const sn=i===0||rows[i-1].c.id!==c.id,ov=!!task?._ov,st=task?.status||"pending";
@@ -1175,7 +1187,7 @@ function renderDisp(){
     const priTd=task?`<div style="display:inline-flex;align-items:center;gap:4px"><div class="pri-dot" style="background:${task.priority==="high"?"#c42b1c":"#c0c0c0"}"></div><span style="font-size:11px;color:${task.priority==="high"?"#c42b1c":"#aaa"}">${task.priority==="high"?"High":""}</span></div>`:`<span style="color:#e0e0e0">—</span>`;
     return`<tr style="border-bottom:1px solid #e0e0e0;background:${st==="complete"?"rgba(16,124,16,.04)":ov?"rgba(196,43,28,.03)":""}"><td class="tcol-name">${nmTd}</td><td style="text-align:center">${priTd}</td><td>${tTd}</td><td style="text-align:center">${stPill}</td><td class="dt mono" style="text-align:center">${task?.addedAt||"—"}</td><td class="dt" style="text-align:center">${task?.status==="complete"&&task?.completedAt?`<span class="mono-ok">✓ ${task.completedAt}</span>`:`<span class="mono">—</span>`}</td></tr>`;
   }).join("");
-  const ft=document.getElementById("d-foot");if(ft)ft.textContent=`${cols.length} colleagues · ${dayT.length} tasks today · refreshed ${new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`;
+  const ft=document.getElementById("d-foot");if(ft)ft.textContent=`${cols.length} of ${D.colleagues.length} colleagues active · ${dayT.length} tasks today · refreshed ${new Date().toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})}`;
   setTimeout(()=>{if(document.getElementById("s-disp").style.display==="flex")renderDisp();},30000);
 }
  
@@ -1353,3 +1365,4 @@ function renderMyTasks(){
 </script>
 </body>
 </html>
+ 
