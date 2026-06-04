@@ -551,48 +551,82 @@ function supaWrite(data){
   .catch(e=>console.warn("Supabase write error:", e));
 }
  
-// Pull latest from Supabase — only overwrite local if remote has MORE colleagues
+// Pull latest from Supabase — merge tasks from all devices
 function supaSync(){
   fetch(SUPA_URL, {headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+SUPA_KEY}})
     .then(r=>r.ok?r.json():null)
     .then(rows=>{
-      if(!rows||!rows.length||!rows[0].data) {
-        // Supabase is empty — push local data up
-        supaWrite(D);
+      if(!rows||!rows.length||!rows[0].data){
+        supaWrite(D); // Supabase empty — push local up
         return;
       }
       const remote = norm(rows[0].data);
-      const localCols  = (D&&D.colleagues||[]).length;
-      const remoteCols = (remote.colleagues||[]).length;
-      // Only update local if remote has more colleagues (added from another device)
-      if(remoteCols > localCols){
+      // Compare full data including tasks — use whichever is newer/has more tasks
+      const localTaskCount  = (D&&D.colleagues||[]).reduce(function(s,c){return s+(c.tasks||[]).length;},0);
+      const remoteTaskCount = (remote.colleagues||[]).reduce(function(s,c){return s+(c.tasks||[]).length;},0);
+      const localStr  = JSON.stringify(D);
+      const remoteStr = JSON.stringify(remote);
+      if(remoteStr === localStr) return; // identical — nothing to do
+      if(remoteTaskCount > localTaskCount){
+        // Remote has more tasks — pull it down
         D = remote;
         lsSave(D);
         redraw();
-      } else if(localCols > remoteCols){
-        // Local has more — push to Supabase
+      } else {
+        // Local has more tasks — push it up
         supaWrite(D);
       }
     })
     .catch(()=>{});
 }
  
+// Session persistence — save/load from localStorage
+const SES_KEY = "dg_session_v1";
+function saveSession(ses){ try{localStorage.setItem(SES_KEY, JSON.stringify(ses));}catch(e){} }
+function loadSession(){ try{const v=localStorage.getItem(SES_KEY); return v?JSON.parse(v):null;}catch(e){return null;} }
+function clearSession(){ try{localStorage.removeItem(SES_KEY);}catch(e){} }
+ 
 // Boot: load from localStorage instantly — no spinner
 (function boot(){
+  // Load data
   const local = lsLoad();
   if(local && local.colleagues && local.colleagues.length >= DEFAULT.colleagues.length){
-    // Local has at least as many colleagues as DEFAULT — use it
     D = norm(local);
   } else {
-    // Local is empty/stale — use DEFAULT (has all colleagues baked in)
     D = norm(DEFAULT);
     lsSave(D);
   }
-  READY = true;
-  show("s-login");
-  fillLoginDrop();
-  // Push to Supabase and sync
-  setTimeout(function(){ supaWrite(D); supaSync(); }, 500);
+ 
+  // Restore session if previously logged in
+  const savedSes = loadSession();
+  if(savedSes){
+    SES = savedSes;
+    READY = true;
+    if(SES.role === "display"){
+      show("s-disp");
+      startDispClock();
+      renderDisp();
+    } else {
+      const isA = SES.role === "admin";
+      document.querySelectorAll(".admin-el").forEach(function(el){el.style.display=isA?"":"none";});
+      var a=document.getElementById("hdr-av"); if(a)a.textContent=avt(SES.name);
+      var u=document.getElementById("hdr-un"); if(u)u.textContent=SES.name;
+      applyTheme(true);
+      fillLoginDrop();
+      fillNameFilter();
+      show("s-app");
+      gotoView("board");
+      startClock();
+      buildAdmin();
+    }
+  } else {
+    READY = true;
+    show("s-login");
+    fillLoginDrop();
+  }
+ 
+  // Sync with Supabase in background
+  setTimeout(function(){ supaSync(); }, 500);
   setInterval(supaSync, 8000);
 })();
  
@@ -668,7 +702,7 @@ function fillLoginDrop(){
 function doLogin(){
   const e=document.getElementById("l-err"); e.style.display="none";
   if(!D){e.textContent="Still connecting…";e.style.display="block";return;}
-  if(ROLE==="display"){SES={role:"display",name:"Display"};show("s-disp");startDispClock();renderDisp();return;}
+  if(ROLE==="display"){SES={role:"display",name:"Display"};saveSession(SES);show("s-disp");startDispClock();renderDisp();return;}
   if(ROLE==="admin"){
     if(document.getElementById("l-pw").value===D.adminPw){SES={role:"admin",name:"Dr. Adithya Iyer"};launch();}
     else{e.textContent="Incorrect password.";e.style.display="block";}
@@ -681,6 +715,7 @@ function doLogin(){
   else{e.textContent="Incorrect name or PIN.";e.style.display="block";}
 }
 function launch(){
+  saveSession(SES);
   const isA=SES.role==="admin";
   document.querySelectorAll(".admin-el").forEach(el=>el.style.display=isA?"":"none");
   const a=document.getElementById("hdr-av"); if(a)a.textContent=avt(SES.name);
@@ -694,12 +729,9 @@ function launch(){
   buildAdmin();
 }
 function logout(){
+  clearSession();
   SES=null;
-  READY=false;
-  CURRENT_SCREEN="s-spin";
   show("s-login");
-  // Reset READY so CURRENT_SCREEN tracks correctly but login is already shown
-  READY=true;
   document.getElementById("l-pw").value="";
   document.getElementById("l-pin").value="";
 }
@@ -1321,4 +1353,3 @@ function renderMyTasks(){
 </script>
 </body>
 </html>
- 
