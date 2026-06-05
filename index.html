@@ -340,6 +340,26 @@
           <div class="acard-hdr">👥 Colleagues <button class="abtn abtn-blue" onclick="openM('m-addcol')">+ Add</button></div>
           <div class="acard-body" style="max-height:380px;overflow-y:auto" id="a-cols"></div>
         </div>
+        <!-- Assign Task card -->
+        <div class="acard">
+          <div class="acard-hdr">📋 Assign Task to Colleague</div>
+          <div class="acard-body">
+            <label class="flabel">Colleague</label>
+            <select class="finput" id="assign-col" style="cursor:pointer"><option value="">Select colleague…</option></select>
+            <label class="flabel">Task</label>
+            <input class="finput" id="assign-task" placeholder="e.g. Prepare monthly report" onkeydown="if(event.key==='Enter')assignTask()">
+            <label class="flabel">Priority</label>
+            <div style="display:flex;gap:8px;margin-top:4px;margin-bottom:14px">
+              <div class="pri-btn sel-norm" id="ap-norm" onclick="setAssignPri('normal')" style="cursor:pointer;padding:6px 14px;border-radius:16px;border:1.5px solid #0067c0;background:#e8f4fe;color:#0067c0;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px">
+                <div style="width:8px;height:8px;border-radius:50%;background:#c0c0c0"></div> Normal
+              </div>
+              <div class="pri-btn" id="ap-high" onclick="setAssignPri('high')" style="cursor:pointer;padding:6px 14px;border-radius:16px;border:1.5px solid #e0e0e0;background:#f9f9f9;color:#5d5d5d;font-size:12px;font-weight:600;display:flex;align-items:center;gap:5px">
+                <div style="width:8px;height:8px;border-radius:50%;background:#c0c0c0"></div> High Priority
+              </div>
+            </div>
+            <button class="abtn abtn-blue" style="width:100%;justify-content:center" onclick="assignTask()">➕ Assign Task</button>
+          </div>
+        </div>
         <div style="display:flex;flex-direction:column;gap:18px">
           <div class="acard">
             <div class="acard-hdr">🔧 Controls</div>
@@ -708,7 +728,12 @@ function doLogin(){
   const cid=document.getElementById("l-name").value;
   const pin=document.getElementById("l-pin").value;
   const c=D.colleagues.find(c=>String(c.id)===String(cid));
-  if(c&&String(c.pin)===String(pin)){SES={role:"colleague",name:c.name,cid:String(c.id)};launch();}
+  if(c&&String(c.pin)===String(pin)){
+    SES = c.isAdmin
+      ? {role:"admin",  name:c.name, cid:String(c.id)}
+      : {role:"colleague", name:c.name, cid:String(c.id)};
+    launch();
+  }
   else{e.textContent="Incorrect name or PIN.";e.style.display="block";}
 }
 function launch(){
@@ -1074,6 +1099,7 @@ function renderHist(){
 // ADMIN
 // ════════════════════════════════════════
 function buildAdmin(){
+  fillAssignDropdown();
   const pg=document.getElementById("preset-grid");
   if(pg)pg.innerHTML=THEMES.map((t,i)=>`<div class="prset-btn" style="background:${t.b}" onclick="loadPre(${i})"><div class="prset-dot" style="background:${t.a}"></div><div class="prset-name" style="color:${t.b==="#0f172a"||t.b==="#1a1a1a"?"#e2e8f0":"#1a1a1a"}">${t.n}</div></div>`).join("");
   const cp=document.getElementById("clrpickers");
@@ -1086,11 +1112,16 @@ function buildAdmin(){
 }
 function renderAdminCols(){
   if(!D)return;
+  fillAssignDropdown();
   const t=td(),el=document.getElementById("a-cols"); if(!el)return;
   if(!D.colleagues.length){el.innerHTML='<div style="text-align:center;color:#aaa;padding:24px;font-size:13px">No colleagues yet.</div>';return;}
   el.innerHTML=D.colleagues.map(c=>{
     const done=c.tasks.filter(k=>k.date===t&&k.status==="complete").length,tot=c.tasks.filter(k=>k.date===t).length;
-    return`<div class="col-item"><div class="avatar" style="background:#0067c0;width:30px;height:30px;font-size:11px">${avt(c.name)}</div><div style="flex:1"><div class="col-name-lbl">${x(c.name)}</div><div class="col-meta">PIN: ${c.pin} · ${done}/${tot} today</div></div><button class="abtn abtn-red" style="font-size:11px;padding:4px 10px" onclick="remCol('${c.id}')">Remove</button></div>`;
+    const adminBadge = c.isAdmin ? '<span style="background:#e8f4fe;color:#0067c0;font-size:10px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:6px">ADMIN</span>' : '';
+    const adminBtn = c.isAdmin
+      ? `<button class="abtn" style="font-size:11px;padding:4px 10px;border:1px solid #e0e0e0;background:#fff;color:#5d5d5d" onclick="revokeAdmin('${c.id}')">Revoke Admin</button>`
+      : `<button class="abtn" style="font-size:11px;padding:4px 10px;border:1px solid #0067c0;background:#e8f4fe;color:#0067c0" onclick="makeAdmin('${c.id}')">Make Admin</button>`;
+    return`<div class="col-item"><div class="avatar" style="background:${c.isAdmin?'#c0392b':'#0067c0'};width:30px;height:30px;font-size:11px">${avt(c.name)}</div><div style="flex:1"><div class="col-name-lbl">${x(c.name)}${adminBadge}</div><div class="col-meta">PIN: ${c.pin} · ${done}/${tot} today</div></div><div style="display:flex;gap:6px">${adminBtn}<button class="abtn abtn-red" style="font-size:11px;padding:4px 10px" onclick="remCol('${c.id}')">Remove</button></div></div>`;
   }).join("");
 }
 function saveCol(){
@@ -1213,8 +1244,79 @@ let TT;function toast(msg,type="inf"){const el=document.getElementById("toast");
 // clone() defined at top of helpers section
  
 // ════════════════════════════════════════
-// COLLEAGUE SELF-VIEW
+// FEATURE 2: ADMIN ASSIGNS TASKS
 // ════════════════════════════════════════
+let ASSIGN_PRI = "normal";
+ 
+function setAssignPri(p){
+  ASSIGN_PRI = p;
+  const norm = document.getElementById("ap-norm");
+  const high = document.getElementById("ap-high");
+  if(norm){ norm.style.border = p==="normal"?"1.5px solid #0067c0":"1.5px solid #e0e0e0"; norm.style.background = p==="normal"?"#e8f4fe":"#f9f9f9"; norm.style.color = p==="normal"?"#0067c0":"#5d5d5d"; }
+  if(high){ high.style.border = p==="high"?"1.5px solid #c42b1c":"1.5px solid #e0e0e0"; high.style.background = p==="high"?"#fde7e9":"#f9f9f9"; high.style.color = p==="high"?"#c42b1c":"#5d5d5d";
+    const dot = high.querySelector("div"); if(dot) dot.style.background = p==="high"?"#c42b1c":"#c0c0c0"; }
+}
+ 
+function fillAssignDropdown(){
+  const sel = document.getElementById("assign-col"); if(!sel||!D) return;
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Select colleague…</option>' +
+    D.colleagues.map(function(c){ return '<option value="'+c.id+'">'+x(c.name)+'</option>'; }).join("");
+  if(cur) sel.value = cur;
+}
+ 
+function assignTask(){
+  const cid  = document.getElementById("assign-col")?.value;
+  const text = document.getElementById("assign-task")?.value.trim();
+  if(!cid)  { toast("Please select a colleague","err"); return; }
+  if(!text) { toast("Please enter a task","err"); return; }
+  if(!D)    return;
+  const nxt = clone();
+  const c   = nxt.colleagues.find(function(k){ return String(k.id)===String(cid); });
+  if(!c)    { toast("Colleague not found","err"); return; }
+  c.tasks.push({
+    id:       String(Date.now()),
+    text:     text,
+    priority: ASSIGN_PRI,
+    status:   "pending",
+    done:     false,
+    date:     td(),
+    addedAt:  now(),
+    assignedBy: "Admin",
+    completedAt: null
+  });
+  wr(nxt);
+  document.getElementById("assign-task").value = "";
+  document.getElementById("assign-col").value  = "";
+  ASSIGN_PRI = "normal";
+  setAssignPri("normal");
+  toast("Task assigned to "+c.name,"ok");
+}
+ 
+// ════════════════════════════════════════
+// FEATURE 3: ADMIN PROMOTES COLLEAGUES
+// ════════════════════════════════════════
+function makeAdmin(cid){
+  askConfirm("Give this colleague full admin access?", function(){
+    const nxt = clone();
+    const c   = nxt.colleagues.find(function(k){ return String(k.id)===String(cid); });
+    if(!c) return;
+    c.isAdmin = true;
+    wr(nxt);
+    toast(c.name+" is now an Admin","ok");
+  });
+}
+ 
+function revokeAdmin(cid){
+  askConfirm("Remove admin access from this colleague?", function(){
+    const nxt = clone();
+    const c   = nxt.colleagues.find(function(k){ return String(k.id)===String(cid); });
+    if(!c) return;
+    c.isAdmin = false;
+    wr(nxt);
+    toast("Admin access removed","inf");
+  });
+}
 function mySetPri(p){
   MY_PRI = p;
   document.getElementById("pri-norm").className = "pri-btn" + (p==="normal"?" sel-norm":"");
@@ -1347,12 +1449,12 @@ function renderMyTasks(){
             ${hiPri?`<span class="tc-pri hi">🔴 High Priority</span>`:`<span class="tc-pri nm">Normal</span>`}
             ${ov&&!done?`<span class="tc-over">⚠ OVERDUE · ${task._days}d ago</span>`:""}
             ${done&&task.completedAt?`<span class="tc-time">✓ Done at ${task.completedAt}</span>`:`<span class="tc-time">Added ${task.addedAt||""}</span>`}
+            ${task.assignedBy?`<span style="font-size:10px;background:#e8f4fe;color:#0067c0;padding:1px 7px;border-radius:10px;font-weight:600">📋 Assigned by Admin</span>`:""}
           </div>
           <div class="tc-actions">
             ${!done?`<button class="tc-btn" onclick="myStartEdit('${task.id}',document.getElementById('tctext-${task.id}'))">✏ Edit</button>`:""}
             <button class="tc-btn" onclick="myTogglePri('${task.id}')">${hiPri?"○ Set Normal":"🔴 Set High"}</button>
             <button class="tc-btn" onclick="myToggleComplete('${task.id}')">${done?"↺ Reopen":"✓ Mark Done"}</button>
-            <button class="tc-btn danger" onclick="myDeleteTask('${task.id}')">🗑 Delete</button>
           </div>
         </div>
       </div>
